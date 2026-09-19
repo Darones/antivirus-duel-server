@@ -191,7 +191,7 @@ setInterval(() => {
   }
 }, 5000);
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`⚔ Duel server on port ${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
+  console.log(`   Health: http://0.0.0.0:${PORT}/health`);
 });
