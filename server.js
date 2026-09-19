@@ -105,6 +105,10 @@ function joinRoom(ws, msg) {
   const player = players.get(ws);
   if (!player) return;
 
+  // ЗАЩИТА: если этот же сокет уже в комнате — игнорировать дубль join_room
+  const already = rooms.get(roomId);
+  if (already && already.players.includes(ws)) return;
+
   const existing = rooms.get(roomId);
   if (existing && existing.players.length < 2) {
     existing.players.push(ws);
