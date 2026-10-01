@@ -12,9 +12,9 @@ const VK_APP_SECRET = process.env.VK_APP_SECRET || '';
 
 // [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
-  bombs_pack:     { title: 'Набор бомб ×5',  price: 10 },
-  bombs_pack_big: { title: 'Набор бомб ×20', price: 25 },
-  remove_ads:     { title: 'Убрать рекламу', price: 10 },
+  bombs_pack:     { title: 'Набор бомб ×5',  price: 10, photo: 'https://darones.github.io/antivirus/logo.png' },
+  bombs_pack_big: { title: 'Набор бомб ×20', price: 25, photo: 'https://darones.github.io/antivirus/logo.png' },
+  remove_ads:     { title: 'Убрать рекламу', price: 10, photo: 'https://darones.github.io/antivirus/logo.png' },
 };
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
@@ -73,7 +73,7 @@ const server = http.createServer((req, res) => {
           const item = SHOP_ITEMS[itemId];
           if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: '', item_id: itemId } }));
+          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: item.photo, item_id: itemId } }));
           return;
         }
 
