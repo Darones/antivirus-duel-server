@@ -10,6 +10,25 @@ const TARGET_VIRUSES = 15;
 
 const VK_APP_SECRET = process.env.VK_APP_SECRET || '';
 
+// [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
+const SHOP_ITEMS = {
+  bombs_pack:     { title: 'Набор бомб ×5',  price: 10 },
+  bombs_pack_big: { title: 'Набор бомб ×20', price: 25 },
+  remove_ads:     { title: 'Убрать рекламу', price: 10 },
+};
+// [PAYMENTS] Хранилище покупок: userId → Set(itemId)
+const purchases = new Map();
+
+// [PAYMENTS] Проверка подписи MD5 (по доке VK)
+function validatePaymentsSig(params) {
+  if (!VK_APP_SECRET) return true;
+  const { sig, ...rest } = params;
+  if (!sig) return false;
+  const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
+  const hash = crypto.createHash('md5').update(sorted + VK_APP_SECRET).digest('hex');
+  return hash === sig;
+}
+
 function validateVKParams(params) {
   if (!VK_APP_SECRET) return true;
   const { sign, ...rest } = params;
@@ -32,6 +51,54 @@ const server = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, waiting: waiting.length }));
+    return;
+  }
+  // [PAYMENTS] Обработка платёжных уведомлений VK
+  if (req.url === '/vk/pay' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const params = Object.fromEntries(new URLSearchParams(body));
+        console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id);
+        if (!validatePaymentsSig(params)) {
+          console.warn('[PAY] invalid sig');
+          res.writeHead(403); res.end(); return;
+        }
+        const type = params.notification_type || '';
+        const itemId = params.item;
+        const userId = params.user_id;
+
+        if (type === 'get_item' || type === 'get_item_test') {
+          const item = SHOP_ITEMS[itemId];
+          if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: '', item_id: itemId } }));
+          return;
+        }
+
+        if (type === 'order_status_change'
+            || type === 'order_status_change_test') {
+          if (params.status === 'chargeable') {
+            const item = SHOP_ITEMS[itemId];
+            if (item) {
+              const set = purchases.get(userId) || new Set();
+              set.add(itemId);
+              purchases.set(userId, set);
+              console.log('[PAY] granted', itemId, 'to', userId);
+            }
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ response: { order_id: params.order_id, app_order_id: Date.now() } }));
+          return;
+        }
+
+        res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 1, error_msg: 'Unknown notification_type', critical: true } } }));
+      } catch (e) {
+        console.error('[PAY] error:', e.message);
+        res.writeHead(500); res.end();
+      }
+    });
     return;
   }
   res.writeHead(404); res.end();
@@ -104,10 +171,6 @@ function joinRoom(ws, msg) {
   if (!roomId) return;
   const player = players.get(ws);
   if (!player) return;
-
-  // ЗАЩИТА: если этот же сокет уже в комнате — игнорировать дубль join_room
-  const already = rooms.get(roomId);
-  if (already && already.players.includes(ws)) return;
 
   const existing = rooms.get(roomId);
   if (existing && existing.players.length < 2) {
