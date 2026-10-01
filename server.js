@@ -9,17 +9,29 @@ const MAX_GARBAGE = 5;
 const TARGET_VIRUSES = 15;
 
 const VK_APP_SECRET = process.env.VK_APP_SECRET || '';
+const OK_APP_SECRET = process.env.OK_APP_SECRET || '';
 
 // [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
-  bombs_pack:     { title: 'Набор бомб ×5',  price: 10, photo: 'https://darones.github.io/antivirus/logo.png' },
-  bombs_pack_big: { title: 'Набор бомб ×20', price: 25, photo: 'https://darones.github.io/antivirus/logo.png' },
-  remove_ads:     { title: 'Убрать рекламу', price: 10, photo: 'https://darones.github.io/antivirus/logo.png' },
+  bombs_pack:     { title: 'Набор бомб ×5',  price: 10 },
+  bombs_pack_big: { title: 'Набор бомб ×20', price: 25 },
+  remove_ads:     { title: 'Убрать рекламу', price: 10 },
 };
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
 
 // [PAYMENTS] Проверка подписи MD5 (по доке VK)
+// [PAYMENTS] Проверка подписи ОК: MD5(MD5(access_token+secret) + params)
+function validateOKSig(params) {
+  if (!OK_APP_SECRET) return true;
+  const { sig, access_token, ...rest } = params;
+  if (!sig) return false;
+  const secretKey = crypto.createHash('md5').update((access_token || '') + OK_APP_SECRET).digest('hex');
+  const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
+  const hash = crypto.createHash('md5').update(sorted + secretKey).digest('hex');
+  return hash === sig;
+}
+
 function validatePaymentsSig(params) {
   if (!VK_APP_SECRET) return true;
   const { sig, ...rest } = params;
@@ -53,6 +65,30 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, waiting: waiting.length }));
     return;
   }
+  // [PAYMENTS] Обработка платёжных уведомлений ОК (GET-запрос)
+  if (req.url.startsWith('/ok/pay')) {
+    const urlObj = new URL(req.url, 'http://x');
+    const params = Object.fromEntries(urlObj.searchParams);
+    console.log('[OK-PAY]', params.operation_type || params.method, 'code=', params.product_code, 'user=', params.uid);
+    if (!validateOKSig(params)) {
+      console.warn('[OK-PAY] invalid sig');
+      res.writeHead(200); res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}'); return;
+    }
+    // ОК может запрашивать подтверждение платежа
+    const code = params.product_code || params.code;
+    const item = SHOP_ITEMS[code];
+    if (item) {
+      const userId = params.uid;
+      const set = purchases.get(userId) || new Set();
+      set.add(code);
+      purchases.set(userId, set);
+      console.log('[OK-PAY] granted', code, 'to', userId);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"status":"ok"}');
+    return;
+  }
+
   // [PAYMENTS] Обработка платёжных уведомлений VK
   if (req.url === '/vk/pay' && req.method === 'POST') {
     let body = '';
@@ -73,7 +109,7 @@ const server = http.createServer((req, res) => {
           const item = SHOP_ITEMS[itemId];
           if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: item.photo, item_id: itemId } }));
+          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: '', item_id: itemId } }));
           return;
         }
 
