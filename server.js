@@ -8,8 +8,10 @@ const MATCHMAKING_TIMEOUT = 120 * 1000;
 const MAX_GARBAGE = 5;
 const TARGET_VIRUSES = 15;
 
-const VK_APP_SECRET = process.env.VK_APP_SECRET || '';
-const OK_APP_SECRET = process.env.OK_APP_SECRET || '';
+const VK_APP_SECRET       = process.env.VK_APP_SECRET || '';
+const VK_APP_SECRET_TANKS = process.env.VK_APP_SECRET_TANKS || '';
+const OK_APP_SECRET       = process.env.OK_APP_SECRET || '';
+const OK_APP_SECRET_TANKS = process.env.OK_APP_SECRET_TANKS || '';
 
 // [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
@@ -17,27 +19,38 @@ const SHOP_ITEMS = {
   bombs_pack_big: { title: 'Набор бомб ×20', price: 25 },
   remove_ads:     { title: 'Убрать рекламу', price: 10 },
 };
+const VK_SHOP_ITEMS_BY_APP = {
+  '54764920': SHOP_ITEMS,
+  '54786750': {
+    tanks_coins_small:  { title: '10 000 монет', price: 5 },
+    tanks_coins_medium: { title: '25 000 монет', price: 10 },
+    tanks_coins_large:  { title: '60 000 монет', price: 20 },
+  },
+};
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
 
 // [PAYMENTS] Проверка подписи MD5 (по доке VK)
 // [PAYMENTS] Проверка подписи ОК: MD5(MD5(access_token+secret) + params)
-function validateOKSig(params) {
-  if (!OK_APP_SECRET) return true;
+function validateOKSig(params, secretOverride) {
+  const secret = secretOverride || OK_APP_SECRET;
+  if (!secret) return true;
   const { sig, access_token, ...rest } = params;
   if (!sig) return false;
-  const secretKey = crypto.createHash('md5').update((access_token || '') + OK_APP_SECRET).digest('hex');
+  const secretKey = crypto.createHash('md5').update((access_token || '') + secret).digest('hex');
   const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
   const hash = crypto.createHash('md5').update(sorted + secretKey).digest('hex');
   return hash === sig;
 }
 
 function validatePaymentsSig(params) {
-  if (!VK_APP_SECRET) return true;
+  const appId = String(params.app_id || '');
+  const secret = (appId === '54786750') ? VK_APP_SECRET_TANKS : VK_APP_SECRET;
+  if (!secret) return true;
   const { sig, ...rest } = params;
   if (!sig) return false;
   const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
-  const hash = crypto.createHash('md5').update(sorted + VK_APP_SECRET).digest('hex');
+  const hash = crypto.createHash('md5').update(sorted + secret).digest('hex');
   return hash === sig;
 }
 
@@ -69,14 +82,18 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/ok/pay')) {
     const urlObj = new URL(req.url, 'http://x');
     const params = Object.fromEntries(urlObj.searchParams);
-    console.log('[OK-PAY]', params.operation_type || params.method, 'code=', params.product_code, 'user=', params.uid);
-    if (!validateOKSig(params)) {
+    const appParam = urlObj.searchParams.get('app') || '54764920';
+    const isTanks = (appParam === '54786750');
+    const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
+    const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
+    console.log('[OK-PAY]', 'app=', appParam, params.operation_type || params.method, 'code=', params.product_code, 'user=', params.uid);
+    if (!validateOKSig(params, okSecret)) {
       console.warn('[OK-PAY] invalid sig');
       res.writeHead(200); res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}'); return;
     }
     // ОК может запрашивать подтверждение платежа
     const code = params.product_code || params.code;
-    const item = SHOP_ITEMS[code];
+    const item = shop[code];
     if (item) {
       const userId = params.uid;
       const set = purchases.get(userId) || new Set();
@@ -104,9 +121,13 @@ const server = http.createServer((req, res) => {
         const type = params.notification_type || '';
         const itemId = params.item;
         const userId = params.user_id;
+        const shopItems = VK_SHOP_ITEMS_BY_APP[params.app_id];
+        if (!shopItems) {
+          res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown app_id', critical: true } } })); return;
+        }
 
         if (type === 'get_item' || type === 'get_item_test') {
-          const item = SHOP_ITEMS[itemId];
+          const item = shopItems[itemId];
           if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: '', item_id: itemId } }));
@@ -116,7 +137,7 @@ const server = http.createServer((req, res) => {
         if (type === 'order_status_change'
             || type === 'order_status_change_test') {
           if (params.status === 'chargeable') {
-            const item = SHOP_ITEMS[itemId];
+            const item = shopItems[itemId];
             if (item) {
               const set = purchases.get(userId) || new Set();
               set.add(itemId);
