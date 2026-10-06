@@ -117,6 +117,18 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const params = Object.fromEntries(new URLSearchParams(body));
+        const appId = String(params.app_id || '');
+        console.log('[PAY-DEBUG] keys=', Object.keys(params).sort().join(','));
+        console.log('[PAY-DEBUG] raw query=', req.url.split('?')[1] || '');
+        console.log('[PAY-DEBUG] sig_received=', String(params.sig || '').slice(0,8), 'len=', String(params.sig||'').length);
+        const secret = (appId === '54786750') ? VK_APP_SECRET_TANKS : VK_APP_SECRET;
+        console.log('[PAY-DEBUG] secret_len=', secret ? secret.length : 0, 'first=', secret ? secret.slice(0,4) : '-', 'last=', secret ? secret.slice(-4) : '-');
+        const { sig, ...rest } = params;
+        const sortedKeys = Object.keys(rest).sort();
+        const sigString = sortedKeys.map(k => k + '=' + rest[k]).join('&');
+        console.log('[PAY-DEBUG] sig_string=', sigString);
+        const expected = crypto.createHash('md5').update(sigString + secret).digest('hex');
+        console.log('[PAY-DEBUG] expected_sig_prefix=', expected.slice(0,8));
         console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id);
         if (!validatePaymentsSig(params)) {
           console.warn('[PAY] invalid sig');
