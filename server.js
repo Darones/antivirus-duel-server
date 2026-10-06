@@ -49,25 +49,33 @@ function validatePaymentsSig(params) {
   if (!secret) return true;
   const { sig, ...rest } = params;
   if (!sig) return false;
-  const keys = Object.keys(rest).sort();
-  const sortedEq = keys.map(k => k + '=' + rest[k]).join('&');
-  const sortedVal = keys.map(k => rest[k]).join('');
-  const sortedValAmp = keys.map(k => rest[k]).join('&');
-  const sortedKeyVal = keys.map(k => k + rest[k]).join('');
-  const v = {
-    v1_sortedEq_secret: crypto.createHash('md5').update(sortedEq + secret).digest('hex'),
-    v2_sortedVal_secret: crypto.createHash('md5').update(sortedVal + secret).digest('hex'),
-    v3_sortedValAmp_secret: crypto.createHash('md5').update(sortedValAmp + secret).digest('hex'),
-    v4_sortedKeyVal_secret: crypto.createHash('md5').update(sortedKeyVal + secret).digest('hex'),
+  const build = (obj) => Object.keys(obj).sort().map(k => k + '=' + obj[k]).join('&');
+  const r_noOrder = { ...rest }; delete r_noOrder.order_id;
+  const r_noRecv = { ...rest }; delete r_noRecv.receiver_id;
+  const r_noBoth = { ...rest }; delete r_noBoth.order_id; delete r_noBoth.receiver_id;
+  const r_noApp = { ...rest }; delete r_noApp.app_id;
+  const r_min = {
+    item: rest.item, lang: rest.lang,
+    notification_type: rest.notification_type, user_id: rest.user_id
   };
-  for (const [n, h] of Object.entries(v)) {
+  const variants = {
+    v2_noOrder: crypto.createHash('md5').update(build(r_noOrder) + secret).digest('hex'),
+    v3_noRecv: crypto.createHash('md5').update(build(r_noRecv) + secret).digest('hex'),
+    v4_noBoth: crypto.createHash('md5').update(build(r_noBoth) + secret).digest('hex'),
+    v5_noApp: crypto.createHash('md5').update(build(r_noApp) + secret).digest('hex'),
+    v6_minimal: crypto.createHash('md5').update(build(r_min) + secret).digest('hex'),
+    v7_secretFirst: crypto.createHash('md5').update(secret + build(rest)).digest('hex'),
+  };
+  for (const [n, h] of Object.entries(variants)) {
     if (h === sig) { console.log('[PAY-SIG] MATCHED', n); return true; }
   }
   console.log('[PAY-SIG] no match. received=', String(sig).slice(0,8));
-  console.log('[PAY-SIG] v1=', v.v1_sortedEq_secret.slice(0,8));
-  console.log('[PAY-SIG] v2=', v.v2_sortedVal_secret.slice(0,8));
-  console.log('[PAY-SIG] v3=', v.v3_sortedValAmp_secret.slice(0,8));
-  console.log('[PAY-SIG] v4=', v.v4_sortedKeyVal_secret.slice(0,8));
+  console.log('[PAY-SIG] v2_noOrder=', variants.v2_noOrder.slice(0,8));
+  console.log('[PAY-SIG] v3_noRecv=', variants.v3_noRecv.slice(0,8));
+  console.log('[PAY-SIG] v4_noBoth=', variants.v4_noBoth.slice(0,8));
+  console.log('[PAY-SIG] v5_noApp=', variants.v5_noApp.slice(0,8));
+  console.log('[PAY-SIG] v6_minimal=', variants.v6_minimal.slice(0,8));
+  console.log('[PAY-SIG] v7_secretFirst=', variants.v7_secretFirst.slice(0,8));
   return false;
 }
 
