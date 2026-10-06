@@ -15,16 +15,16 @@ const OK_APP_SECRET_TANKS = process.env.OK_APP_SECRET_TANKS || '';
 
 // [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
-  bombs_pack:     { title: 'Набор бомб ×5',  price: 10 },
-  bombs_pack_big: { title: 'Набор бомб ×20', price: 25 },
-  remove_ads:     { title: 'Убрать рекламу', price: 10 },
+  bombs_pack:     { title: 'Набор бомб ×5',  price: 10, photo_url: 'https://darones.github.io/antivirus/logo.png' },
+  bombs_pack_big: { title: 'Набор бомб ×20', price: 25, photo_url: 'https://darones.github.io/antivirus/logo.png' },
+  remove_ads:     { title: 'Убрать рекламу', price: 10, photo_url: 'https://darones.github.io/antivirus/logo.png' },
 };
 const VK_SHOP_ITEMS_BY_APP = {
   '54764920': SHOP_ITEMS,
   '54786750': {
-    tanks_coins_small:  { title: '10 000 монет', price: 5 },
-    tanks_coins_medium: { title: '25 000 монет', price: 10 },
-    tanks_coins_large:  { title: '60 000 монет', price: 20 },
+    tanks_coins_small:  { title: '10 000 монет', price: 5, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+    tanks_coins_medium: { title: '25 000 монет', price: 10, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+    tanks_coins_large:  { title: '60 000 монет', price: 20, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
   },
 };
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
@@ -86,7 +86,7 @@ const server = http.createServer((req, res) => {
     const isTanks = (appParam === '54786750');
     const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
-    console.log('[OK-PAY]', 'app=', appParam, params.operation_type || params.method, 'code=', params.product_code, 'user=', params.uid);
+    console.log('[OK-PAY]', 'app=', appParam, params.operation_type || params.method || '-', 'code=', params.product_code, 'user=', params.uid);
     if (!validateOKSig(params, okSecret)) {
       console.warn('[OK-PAY] invalid sig');
       res.writeHead(200); res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}'); return;
@@ -94,13 +94,17 @@ const server = http.createServer((req, res) => {
     // ОК может запрашивать подтверждение платежа
     const code = params.product_code || params.code;
     const item = shop[code];
-    if (item) {
-      const userId = params.uid;
-      const set = purchases.get(userId) || new Set();
-      set.add(code);
-      purchases.set(userId, set);
-      console.log('[OK-PAY] granted', code, 'to', userId);
+    const amount = Number(params.amount);
+    if (!item || item.price !== amount) {
+      console.warn('[OK-PAY] invalid product or amount', code, params.amount);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"error_code":1001,"error_msg":"Invocation-error"}'); return;
     }
+    const userId = params.uid;
+    const set = purchases.get(userId) || new Set();
+    set.add(code);
+    purchases.set(userId, set);
+    console.log('[OK-PAY] granted', code, 'to', userId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"status":"ok"}');
     return;
@@ -130,7 +134,8 @@ const server = http.createServer((req, res) => {
           const item = shopItems[itemId];
           if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: '', item_id: itemId } }));
+          if (!item.photo_url) console.warn('[GET_ITEM] empty photo_url for', itemId);
+          res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: item.photo_url || '', item_id: itemId } }));
           return;
         }
 
