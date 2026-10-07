@@ -45,37 +45,40 @@ function validateOKSig(params, secretOverride) {
 
 function validatePaymentsSig(params) {
   const appId = String(params.app_id || '');
-  const secret = (appId === '54786750') ? VK_APP_SECRET_TANKS : VK_APP_SECRET;
+  const isOK = (params.site === 'OK') || (appId === '512004990432');
+  const isTanks = (appId === '54786750');
+
+  let secret;
+  if (isOK) secret = OK_APP_SECRET;
+  else if (isTanks) secret = VK_APP_SECRET_TANKS;
+  else secret = VK_APP_SECRET;
+
   if (!secret) return true;
   const { sig, ...rest } = params;
   if (!sig) return false;
-  const build = (obj) => Object.keys(obj).sort().map(k => k + '=' + obj[k]).join('&');
-  const r_noOrder = { ...rest }; delete r_noOrder.order_id;
-  const r_noRecv = { ...rest }; delete r_noRecv.receiver_id;
-  const r_noBoth = { ...rest }; delete r_noBoth.order_id; delete r_noBoth.receiver_id;
-  const r_noApp = { ...rest }; delete r_noApp.app_id;
-  const r_min = {
-    item: rest.item, lang: rest.lang,
-    notification_type: rest.notification_type, user_id: rest.user_id
-  };
-  const variants = {
-    v2_noOrder: crypto.createHash('md5').update(build(r_noOrder) + secret).digest('hex'),
-    v3_noRecv: crypto.createHash('md5').update(build(r_noRecv) + secret).digest('hex'),
-    v4_noBoth: crypto.createHash('md5').update(build(r_noBoth) + secret).digest('hex'),
-    v5_noApp: crypto.createHash('md5').update(build(r_noApp) + secret).digest('hex'),
-    v6_minimal: crypto.createHash('md5').update(build(r_min) + secret).digest('hex'),
-    v7_secretFirst: crypto.createHash('md5').update(secret + build(rest)).digest('hex'),
-  };
-  for (const [n, h] of Object.entries(variants)) {
-    if (h === sig) { console.log('[PAY-SIG] MATCHED', n); return true; }
+  const keys = Object.keys(rest).sort();
+  const sorted = keys.map(k => k + '=' + rest[k]).join('&');
+
+  // VK: MD5(sorted + secret)
+  const v1 = crypto.createHash('md5').update(sorted + secret).digest('hex');
+  if (v1 === sig) { console.log('[PAY-SIG] MATCHED v1_md5, isOK=', isOK); return true; }
+
+  // OK: MD5(MD5(application_key + secret) + sorted)
+  if (isOK && params.application_key) {
+    const keyHash = crypto.createHash('md5').update(params.application_key + secret).digest('hex');
+    const v2 = crypto.createHash('md5').update(keyHash + sorted).digest('hex');
+    if (v2 === sig) { console.log('[PAY-SIG] MATCHED v2_ok'); return true; }
   }
-  console.log('[PAY-SIG] no match. received=', String(sig).slice(0,8));
-  console.log('[PAY-SIG] v2_noOrder=', variants.v2_noOrder.slice(0,8));
-  console.log('[PAY-SIG] v3_noRecv=', variants.v3_noRecv.slice(0,8));
-  console.log('[PAY-SIG] v4_noBoth=', variants.v4_noBoth.slice(0,8));
-  console.log('[PAY-SIG] v5_noApp=', variants.v5_noApp.slice(0,8));
-  console.log('[PAY-SIG] v6_minimal=', variants.v6_minimal.slice(0,8));
-  console.log('[PAY-SIG] v7_secretFirst=', variants.v7_secretFirst.slice(0,8));
+
+  console.log('[PAY-SIG] no match. isOK=', isOK, 'appId=', appId,
+    'secret_len=', secret.length, 'first=', secret.slice(0,4));
+  console.log('[PAY-SIG] received=', String(sig).slice(0,8));
+  console.log('[PAY-SIG] v1_md5=', v1.slice(0,8));
+  if (isOK && params.application_key) {
+    const keyHash = crypto.createHash('md5').update(params.application_key + secret).digest('hex');
+    const v2 = crypto.createHash('md5').update(keyHash + sorted).digest('hex');
+    console.log('[PAY-SIG] v2_ok=', v2.slice(0,8));
+  }
   return false;
 }
 
