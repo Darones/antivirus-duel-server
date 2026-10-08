@@ -125,6 +125,8 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const params = Object.fromEntries(new URLSearchParams(body));
+        console.log('[RAW] FULL PARAMS:', JSON.stringify(params));
+        console.log('[RAW] keys:', Object.keys(params).sort().join(','));
         const appId = String(params.app_id || '');
         const secret = (appId === '54786750') ? VK_APP_SECRET_TANKS : VK_APP_SECRET;
         const { sig, ...rest } = params;
