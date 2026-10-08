@@ -10,6 +10,7 @@ const TARGET_VIRUSES = 15;
 
 const VK_APP_SECRET       = process.env.VK_APP_SECRET || '';
 const VK_APP_SECRET_TANKS = process.env.VK_APP_SECRET_TANKS || '';
+const VK_SERVICE_KEY = process.env.VK_SERVICE_KEY || '';
 const OK_APP_SECRET       = process.env.OK_APP_SECRET || '';
 const OK_APP_SECRET_TANKS = process.env.OK_APP_SECRET_TANKS || '';
 
@@ -48,37 +49,70 @@ function validatePaymentsSig(params) {
   const isOK = (params.site === 'OK') || (appId === '512004990432');
   const isTanks = (appId === '54786750');
 
-  let secret;
-  if (isOK) secret = OK_APP_SECRET;
-  else if (isTanks) secret = VK_APP_SECRET_TANKS;
-  else secret = VK_APP_SECRET;
-
-  if (!secret) return true;
   const { sig, ...rest } = params;
   if (!sig) return false;
-  const keys = Object.keys(rest).sort();
-  const sorted = keys.map(k => k + '=' + rest[k]).join('&');
 
-  // VK: MD5(sorted + secret)
-  const v1 = crypto.createHash('md5').update(sorted + secret).digest('hex');
-  if (v1 === sig) { console.log('[PAY-SIG] MATCHED v1_md5, isOK=', isOK); return true; }
-
-  // OK: MD5(MD5(application_key + secret) + sorted)
-  if (isOK && params.application_key) {
-    const keyHash = crypto.createHash('md5').update(params.application_key + secret).digest('hex');
-    const v2 = crypto.createHash('md5').update(keyHash + sorted).digest('hex');
-    if (v2 === sig) { console.log('[PAY-SIG] MATCHED v2_ok'); return true; }
+  const secrets = [];
+  if (isOK) {
+    secrets.push(['OK', OK_APP_SECRET]);
+  } else if (isTanks) {
+    secrets.push(['VK_TANKS', VK_APP_SECRET_TANKS]);
+  } else {
+    secrets.push(['VK_PROTECTED', VK_APP_SECRET]);
+    if (VK_SERVICE_KEY) secrets.push(['VK_SERVICE', VK_SERVICE_KEY]);
+    if (OK_APP_SECRET) secrets.push(['OK_APP', OK_APP_SECRET]);
   }
 
-  console.log('[PAY-SIG] no match. isOK=', isOK, 'appId=', appId,
-    'secret_len=', secret.length, 'first=', secret.slice(0,4));
-  console.log('[PAY-SIG] received=', String(sig).slice(0,8));
-  console.log('[PAY-SIG] v1_md5=', v1.slice(0,8));
-  if (isOK && params.application_key) {
-    const keyHash = crypto.createHash('md5').update(params.application_key + secret).digest('hex');
-    const v2 = crypto.createHash('md5').update(keyHash + sorted).digest('hex');
-    console.log('[PAY-SIG] v2_ok=', v2.slice(0,8));
+  const paramSets = [];
+  paramSets.push(['all', rest]);
+  const noLang = { ...rest }; delete noLang.lang;
+  paramSets.push(['no_lang', noLang]);
+  const noOrder = { ...rest }; delete noOrder.order_id;
+  paramSets.push(['no_order', noOrder]);
+  const noOrderRecv = { ...rest }; delete noOrderRecv.order_id; delete noOrderRecv.receiver_id;
+  paramSets.push(['no_order_recv', noOrderRecv]);
+  const noApp = { ...rest }; delete noApp.app_id;
+  paramSets.push(['no_app', noApp]);
+  const minimal = { item: rest.item, notification_type: rest.notification_type, user_id: rest.user_id };
+  paramSets.push(['minimal', minimal]);
+  const onlyItem = { item: rest.item, user_id: rest.user_id };
+  paramSets.push(['only_item_user', onlyItem]);
+
+  const buildEqAmp = (o) => Object.keys(o).sort().map(k => k + '=' + o[k]).join('&');
+  const buildEqNoSep = (o) => Object.keys(o).sort().map(k => k + '=' + o[k]).join('');
+  const buildValOnly = (o) => Object.keys(o).sort().map(k => o[k]).join('');
+
+  const hits = [];
+  for (const [sname, secret] of secrets) {
+    if (!secret) continue;
+    for (const [pname, pset] of paramSets) {
+      const eqAmp = buildEqAmp(pset);
+      const eqNoSep = buildEqNoSep(pset);
+      const valOnly = buildValOnly(pset);
+      const h1 = crypto.createHash('md5').update(eqAmp + secret).digest('hex');
+      if (h1 === sig) hits.push(`MD5_eqAmp:${sname}:${pname}`);
+      const h2 = crypto.createHash('md5').update(eqNoSep + secret).digest('hex');
+      if (h2 === sig) hits.push(`MD5_noSep:${sname}:${pname}`);
+      const h3 = crypto.createHash('md5').update(valOnly + secret).digest('hex');
+      if (h3 === sig) hits.push(`MD5_valOnly:${sname}:${pname}`);
+      const h4 = crypto.createHmac('sha256', secret).update(eqAmp).digest('hex');
+      if (h4 === sig) hits.push(`HMAC256:${sname}:${pname}`);
+      if (h4.slice(0, 32) === sig) hits.push(`HMAC256_trunc32:${sname}:${pname}`);
+      const h5 = crypto.createHash('sha256').update(eqAmp + secret).digest('hex');
+      if (h5.slice(0, 32) === sig) hits.push(`SHA256_trunc32:${sname}:${pname}`);
+      const h6 = crypto.createHash('sha1').update(eqAmp + secret).digest('hex');
+      if (h6.slice(0, 32) === sig) hits.push(`SHA1_trunc32:${sname}:${pname}`);
+    }
   }
+
+  if (hits.length > 0) {
+    console.log('[PAY-SIG] MATCHED:', hits.join(' | '));
+    return true;
+  }
+  console.log('[PAY-SIG] no match. received=', String(sig).slice(0,8));
+  console.log('[PAY-SIG] secrets: VK_PROTECTED_len=', VK_APP_SECRET.length,
+    'VK_SERVICE_len=', VK_SERVICE_KEY.length,
+    'OK_APP_len=', OK_APP_SECRET.length);
   return false;
 }
 
