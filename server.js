@@ -84,7 +84,16 @@ let roomCounter = 0;
 const createRoomId = () => 'r' + (++roomCounter).toString(36) + Math.random().toString(36).slice(2, 6);
 const send = (ws, msg) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 
+function setCORS(res){
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
 const server = http.createServer((req, res) => {
+  setCORS(res);
+  if(req.method === 'OPTIONS'){ res.writeHead(204); res.end(); return; }
   // POST /stats/event — приём батча событий от клиента
   if (req.url === '/stats/event' && req.method === 'POST') {
     let body = '';
