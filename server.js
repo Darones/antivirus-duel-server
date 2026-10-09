@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
-const STATS_TOKEN = process.env.STATS_TOKEN || 'change-me-antivirus-stats';
+const STATS_TOKEN = process.env['STATS_TOKEN'] || 'change-me-antivirus-stats';
 
 const PORT = process.env.PORT || 3000;
 const MATCHMAKING_TIMEOUT = 120 * 1000;
