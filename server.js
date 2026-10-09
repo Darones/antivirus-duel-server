@@ -2,6 +2,10 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const STATS_FILE = path.join(__dirname, 'events.jsonl');
+const STATS_TOKEN = process.env.STATS_TOKEN || 'change-me-antivirus-stats';
 
 const PORT = process.env.PORT || 3000;
 const MATCHMAKING_TIMEOUT = 120 * 1000;
@@ -81,6 +85,47 @@ const createRoomId = () => 'r' + (++roomCounter).toString(36) + Math.random().to
 const send = (ws, msg) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); };
 
 const server = http.createServer((req, res) => {
+  // POST /stats/event — приём батча событий от клиента
+  if (req.url === '/stats/event' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const events = Array.isArray(data?.events) ? data.events : [];
+        if (events.length === 0) { res.writeHead(200); res.end('{"ok":true}'); return; }
+        const lines = events.map(e => JSON.stringify(e)).join('\n') + '\n';
+        fs.appendFileSync(STATS_FILE, lines, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, received: events.length }));
+      } catch (e) {
+        console.warn('[STATS] bad payload:', e.message);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":false}');
+      }
+    });
+    return;
+  }
+
+  // GET /stats/data?token=XXX — сводка в JSON
+  if (req.url.startsWith('/stats/data')) {
+    const urlObj = new URL(req.url, 'http://x');
+    const token = urlObj.searchParams.get('token') || '';
+    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(buildStatsSummary()));
+    return;
+  }
+
+  // GET /stats/dashboard?token=XXX — HTML-страница с графиками
+  if (req.url.startsWith('/stats/dashboard')) {
+    const urlObj = new URL(req.url, 'http://x');
+    const token = urlObj.searchParams.get('token') || '';
+    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(renderStatsDashboard(token));
+    return;
+  }
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, waiting: waiting.length }));
@@ -338,6 +383,297 @@ setInterval(() => {
   }
 }, 5000);
 
+function buildStatsSummary() {
+  let lines = [];
+  try { lines = fs.readFileSync(STATS_FILE, 'utf8').split('\n').filter(Boolean); } catch { lines = []; }
+  const events = [];
+  for (const line of lines) {
+    try { events.push(JSON.parse(line)); } catch {}
+  }
+  const byDay = {};
+  const players = new Set();
+  const eventCounts = {};
+  const levelStart = {};
+  const levelEnd = {};
+  const levelFail = {};
+  const lastScreen = {};
+  const screens = {};
+  let purchases = 0, adWatched = 0, adFailed = 0;
+  const sessionsByPlayer = {};
+  const lastSeen = {};
+  const sessions = [];
+  const openSessions = new Map();
+
+  for (const e of events) {
+    const t = Number(e.t) || 0;
+    const d = t ? new Date(t * 1000) : new Date();
+    const day = d.toISOString().slice(0, 10);
+    byDay[day] = byDay[day] || { players: new Set(), sessions: 0, events: 0 };
+    byDay[day].events++;
+    if (e.playerId) { players.add(e.playerId); byDay[day].players.add(e.playerId); }
+
+    eventCounts[e.ev] = (eventCounts[e.ev] || 0) + 1;
+
+    if (e.ev === 'session_start') byDay[day].sessions++;
+    if (e.ev === 'session_end' && e.duration) {
+      (sessionsByPlayer[e.playerId] = sessionsByPlayer[e.playerId] || []).push(e.duration);
+    }
+    if (e.ev === 'level_start' && e.level != null) levelStart[e.level] = (levelStart[e.level]||0)+1;
+    if (e.ev === 'level_end') {
+      if (e.won) levelEnd[e.level] = (levelEnd[e.level]||0)+1;
+      else       levelFail[e.level] = (levelFail[e.level]||0)+1;
+    }
+    if (e.ev === 'screen' && e.screen) screens[e.screen] = (screens[e.screen]||0)+1;
+    if (e.ev === 'app_close' && e.screen) lastScreen[e.screen] = (lastScreen[e.screen]||0)+1;
+    if (e.ev === 'purchase') purchases++;
+    if (e.ev === 'ad_watch') { if (e.ok) adWatched++; else adFailed++; }
+
+    const sessionKey = e.sessionId ? String(e.sessionId) : (e.playerId ? 'p_' + e.playerId : null);
+    if (e.ev === 'session_start' && sessionKey) {
+      openSessions.set(sessionKey, { playerId: e.playerId, start: t, end: null });
+    }
+    if (e.ev === 'session_end' && sessionKey) {
+      const open = openSessions.get(sessionKey);
+      if (open) {
+        sessions.push({ start: open.start, end: t, playerId: open.playerId });
+        openSessions.delete(sessionKey);
+      }
+    }
+    if (e.playerId && e.ev !== 'session_end' && e.ev !== 'app_close') {
+      const previous = lastSeen[e.playerId] || {};
+      lastSeen[e.playerId] = {
+        t,
+        screen: e.screen || previous.screen || '',
+        mode: e.mode || previous.mode || '',
+        level: e.level ?? previous.level ?? null,
+        platform: e.platform || previous.platform || ''
+      };
+    }
+  }
+
+  const ONLINE_WINDOW = 180;
+  for (const [sessionKey, open] of openSessions) {
+    sessions.push({ start: open.start, end: open.start + ONLINE_WINDOW, playerId: open.playerId });
+    openSessions.delete(sessionKey);
+  }
+
+  const allDurations = Object.values(sessionsByPlayer).flat();
+  const avgSession = allDurations.length
+    ? Math.round(allDurations.reduce((a,b)=>a+b,0) / allDurations.length)
+    : 0;
+
+  const days = Object.keys(byDay).sort().slice(-30).map(day => ({
+    day,
+    players: byDay[day].players.size,
+    sessions: byDay[day].sessions,
+    events: byDay[day].events
+  }));
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const onlineNow = [];
+  for (const [pid, info] of Object.entries(lastSeen)) {
+    const age = nowSec - info.t;
+    if (age <= ONLINE_WINDOW) onlineNow.push({ playerId: pid, lastSeen: info.t, ageSec: age, screen: info.screen, mode: info.mode, level: info.level, platform: info.platform });
+  }
+  onlineNow.sort((a,b)=>a.ageSec-b.ageSec);
+
+  const historyOnline = [];
+  for (let i=59;i>=0;i--) {
+    const bucketEnd=nowSec-i*60, bucketStart=bucketEnd-60;
+    let count=0;
+    for (const session of sessions) {
+      const sessionEnd=session.end || (session.start+ONLINE_WINDOW);
+      if (session.start<bucketEnd && sessionEnd>bucketStart) count++;
+    }
+    historyOnline.push({ offsetMin:-i, online:count });
+  }
+
+  const timeline = {};
+  for (const session of sessions) {
+    const sessionEnd=session.end || (session.start+ONLINE_WINDOW);
+    if (nowSec-sessionEnd>86400) continue;
+    timeline[session.start]=(timeline[session.start]||0)+1;
+    timeline[sessionEnd]=(timeline[sessionEnd]||0)-1;
+  }
+  const timelineKeys=Object.keys(timeline).map(Number).sort((a,b)=>a-b);
+  let peak=0,cur=0;
+  for (const time of timelineKeys) { cur+=timeline[time]; if(cur>peak)peak=cur; }
+
+  const funnel = [];
+  for (let i = 1; i <= 30; i++) {
+    funnel.push({
+      level: i,
+      started: levelStart[i] || 0,
+      won: levelEnd[i] || 0,
+      lost: levelFail[i] || 0
+    });
+  }
+
+  return {
+    totalEvents: events.length,
+    uniquePlayers: players.size,
+    avgSessionSec: avgSession,
+    purchases,
+    adWatched,
+    adFailed,
+    days,
+    eventCounts,
+    funnel,
+    screens,
+    lastScreen,
+    onlineNowCount: onlineNow.length,
+    onlineNow: onlineNow.slice(0,20),
+    onlinePeak24h: peak,
+    historyOnline
+  };
+}
+
+function renderStatsDashboard(token) {
+  return `<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><title>Антивирус — Статистика</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body{font:14px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:20px}
+h1{margin:0 0 6px;font-size:22px}
+h2{font-size:16px;margin:24px 0 10px;color:#334155}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:12px 0}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px}
+.card b{display:block;font-size:22px;color:#6366f1}
+.card small{color:#64748b}
+.chart-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin:8px 0}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;font-size:13px}
+th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #e2e8f0}
+th{background:#f1f5f9;font-weight:700}
+tr:last-child td{border-bottom:none}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+</style></head><body>
+<h1> Антивирус — статистика</h1>
+<p id="updated" style="color:#64748b"></p>
+
+<div class="cards" id="cards"></div>
+
+<div class="chart-wrap"><canvas id="chOnlineHistory" height="140"></canvas></div>
+
+<h2>Активные сейчас (последние 3 минуты)</h2>
+<div class="chart-wrap"><table id="tblOnline"></table></div>
+
+<div class="cols">
+  <div class="chart-wrap"><canvas id="chDays" height="180"></canvas></div>
+  <div class="chart-wrap"><canvas id="chEvents" height="180"></canvas></div>
+</div>
+
+<h2>Воронка по уровням</h2>
+<div class="chart-wrap"><canvas id="chFunnel" height="220"></canvas></div>
+
+<div class="cols">
+  <div>
+    <h2>Экраны (всего переходов)</h2>
+    <table id="tblScreens"></table>
+  </div>
+  <div>
+    <h2>Последний экран перед закрытием</h2>
+    <table id="tblLastScreen"></table>
+  </div>
+</div>
+
+<script>
+const TOKEN = ${JSON.stringify(token)};
+function updateTitleBadge(online){
+  document.title=online>0?' '+online+' онлайн — Антивирус':'Антивирус — Статистика';
+}
+async function refresh(){
+  try{
+    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN));
+    if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
+    const d=await r.json();
+    document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
+    renderCards(d);renderCharts(d);renderTables(d);updateTitleBadge(d.onlineNowCount||0);
+  }catch(e){console.warn('refresh fail',e);}
+}
+refresh();
+setInterval(refresh,30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+function renderCards(d){
+  const c = document.getElementById('cards');
+  const items = [
+    ['Онлайн сейчас', d.onlineNowCount],
+    ['Пик за сутки', d.onlinePeak24h],
+    ['Уникальных игроков', d.uniquePlayers],
+    ['Всего событий', d.totalEvents],
+    ['Средняя сессия', d.avgSessionSec ? d.avgSessionSec + ' сек' : '—'],
+    ['Покупок', d.purchases],
+    ['Реклама ок', d.adWatched],
+    ['Реклама провал', d.adFailed]
+  ];
+  c.innerHTML = items.map(([t,v]) => '<div class="card"><b>'+v+'</b><small>'+t+'</small></div>').join('');
+}
+let charts = {};
+function renderCharts(d){
+  const labels = d.days.map(x => x.day.slice(5));
+  if(charts.days) charts.days.destroy();
+  charts.days = new Chart(document.getElementById('chDays'), {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Игроки', data:d.days.map(x=>x.players), borderColor:'#6366f1', backgroundColor:'#6366f133', tension:.3, fill:true },
+      { label:'Сессии', data:d.days.map(x=>x.sessions), borderColor:'#f59e0b', backgroundColor:'#f59e0b33', tension:.3, fill:true }
+    ]},
+    options:{ responsive:true, plugins:{ title:{display:true,text:'Игроки и сессии по дням'} } }
+  });
+
+  const evLabels = Object.keys(d.eventCounts).sort((a,b)=>d.eventCounts[b]-d.eventCounts[a]).slice(0,10);
+  if(charts.events) charts.events.destroy();
+  charts.events = new Chart(document.getElementById('chEvents'), {
+    type:'bar',
+    data:{ labels:evLabels, datasets:[{ label:'Событий', data:evLabels.map(k=>d.eventCounts[k]), backgroundColor:'#6366f1' }]},
+    options:{ responsive:true, indexAxis:'y', plugins:{ title:{display:true,text:'Топ событий'} } }
+  });
+
+  if(charts.funnel) charts.funnel.destroy();
+  charts.funnel = new Chart(document.getElementById('chFunnel'), {
+    type:'bar',
+    data:{ labels:d.funnel.map(x=>'Ур.'+x.level), datasets:[
+      { label:'Начали', data:d.funnel.map(x=>x.started), backgroundColor:'#94a3b8' },
+      { label:'Победили', data:d.funnel.map(x=>x.won), backgroundColor:'#10b981' },
+      { label:'Проиграли', data:d.funnel.map(x=>x.lost), backgroundColor:'#ef4444' }
+    ]},
+    options:{ responsive:true, scales:{ x:{stacked:true}, y:{stacked:true} } }
+  });
+
+  if(charts.online) charts.online.destroy();
+  charts.online = new Chart(document.getElementById('chOnlineHistory'), {
+    type:'line',
+    data:{ labels:(d.historyOnline||[]).map(x=>x.offsetMin===0?'сейчас':x.offsetMin+'м'), datasets:[{ label:'Онлайн', data:(d.historyOnline||[]).map(x=>x.online), borderColor:'#10b981', backgroundColor:'#10b98133', tension:.3, fill:true, pointRadius:2 }]},
+    options:{ responsive:true, plugins:{ title:{display:true,text:'Онлайн за последний час'} }, scales:{ y:{beginAtZero:true,ticks:{precision:0}} } }
+  });
+}
+function renderTables(d){
+  const t1 = document.getElementById('tblScreens');
+  const rows1 = Object.entries(d.screens).sort((a,b)=>b[1]-a[1]);
+  t1.innerHTML = '<tr><th>Экран</th><th>Раз</th></tr>' + rows1.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v+'</td></tr>').join('');
+  const t2 = document.getElementById('tblLastScreen');
+  const rows2 = Object.entries(d.lastScreen).sort((a,b)=>b[1]-a[1]);
+  t2.innerHTML = '<tr><th>Экран</th><th>Уходов</th></tr>' + rows2.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v+'</td></tr>').join('');
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  const t3=document.getElementById('tblOnline');
+  if(t3){
+    const rows=(d.onlineNow||[]).slice().sort((a,b)=>a.ageSec-b.ageSec);
+    if(rows.length===0){
+      t3.innerHTML='<tr><td style="color:#64748b">Никого — все ушли</td></tr>';
+    }else{
+      t3.innerHTML='<tr><th>Игрок</th><th>Платформа</th><th>Экран</th><th>Уровень</th><th>Тишина</th></tr>'
+        + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(r.screen||'—')+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+' сек</td></tr>').join('');
+    }
+  }
+}
+load();
+</script>
+</body></html>`;
+}
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`⚔ Duel server on port ${PORT}`);
   console.log(`   Health: http://0.0.0.0:${PORT}/health`);
