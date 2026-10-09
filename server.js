@@ -116,6 +116,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // GET /stats/reset?token=XXX ? ???????? events.jsonl
+  if (req.url.startsWith('/stats/reset')) {
+    const urlObj = new URL(req.url, 'http://x');
+    const token = urlObj.searchParams.get('token') || '';
+    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+    try {
+      fs.writeFileSync(STATS_FILE, '', 'utf8');
+      console.log('[STATS] file cleared by token');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<meta charset="utf-8"><h2>?????????? ???????</h2><p><a href="/stats/dashboard?token=' + encodeURIComponent(token) + '">? ????????</a></p>');
+    } catch (e) {
+      console.warn('[STATS] reset failed:', e.message);
+      res.writeHead(500); res.end('reset failed');
+    }
+    return;
+  }
   // GET /stats/data?token=XXX — сводка в JSON
   if (req.url.startsWith('/stats/data')) {
     const urlObj = new URL(req.url, 'http://x');
