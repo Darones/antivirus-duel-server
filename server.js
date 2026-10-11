@@ -173,8 +173,9 @@ const server = http.createServer((req, res) => {
     let notificationType = params.notification_type || params.operation_type || '';
     // Если OK присылает подтверждение без notification_type,
     // но с product_code — считаем это order_status_change
-    if (!notificationType && (params.product_code || params.code) && params.amount) {
+    if (!notificationType && (params.product_code || params.code || params.item_id) && (params.status || params.amount || params.method === 'callbacks.payment')) {
       notificationType = 'order_status_change';
+      console.log('[OK-PAY] inferred order_status_change from params');
     }
     console.log('[OK-PAY] type=', notificationType, 'status=', params.status, 'product=', params.product_code);
     const itemId = params.product_code || params.item || params.code;
@@ -224,17 +225,26 @@ const server = http.createServer((req, res) => {
 
     // order_status_change — подтверждение покупки
     if (notificationType === 'order_status_change' || notificationType === 'order_status_change_test') {
-      if (params.status === 'chargeable') {
-        const item = shop[itemId];
+      // OK НЕ присылает status. Считаем покупку подтверждённой, если
+      // пришёл product_code и (transaction_id или amount).
+      // VK присылает status=chargeable — оставляем как условие.
+      const isOKPayment = (params.method === 'callbacks.payment') || (params.application_key === 'CBOGCBOGDIHBABABA') || !params.status;
+      const isChargeable = (params.status === 'chargeable') || (isOKPayment && (params.product_code || params.item_id || params.item));
+      console.log('[OK-PAY-ORDER] isOKPayment=', isOKPayment, 'isChargeable=', isChargeable, 'status=', params.status, 'product_code=', params.product_code);
+      if (isChargeable) {
+        const resolvedItemId = params.product_code || params.item_id || params.item || itemId;
+        const item = shop[resolvedItemId];
         if (item) {
           const set = purchases.get(userId) || new Set();
-          set.add(itemId);
+          set.add(resolvedItemId);
           purchases.set(userId, set);
-          console.log('[OK-PAY] granted', itemId, 'to', userId);
+          console.log('[OK-PAY] granted', resolvedItemId, 'to', userId);
+        } else {
+          console.warn('[OK-PAY] item not found in shop:', resolvedItemId);
         }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ response: { order_id: orderId, app_order_id: Date.now() } }));
+      res.end(JSON.stringify({ response: { order_id: orderId || params.transaction_id, app_order_id: Date.now() } }));
       return;
     }
 
