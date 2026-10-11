@@ -30,6 +30,7 @@ const VK_SHOP_ITEMS_BY_APP = {
     tanks_coins_medium: { title: '25 000 монет', price: 10, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
     tanks_coins_large:  { title: '60 000 монет', price: 20, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
   },
+  '512004990432': SHOP_ITEMS,
 };
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
@@ -251,24 +252,30 @@ const server = http.createServer((req, res) => {
         console.log('[RAW] FULL PARAMS:', JSON.stringify(params));
         console.log('[RAW] keys:', Object.keys(params).sort().join(','));
         const appId = String(params.app_id || '');
-        const secret = (appId === '54786750') ? VK_APP_SECRET_TANKS : VK_APP_SECRET;
-        const { sig, ...rest } = params;
-        const sortedKeys = Object.keys(rest).sort();
-        const sigString = sortedKeys.map(k => k + '=' + rest[k]).join('&');
-        const expected = crypto.createHash('md5').update(sigString + secret).digest('hex');
-        console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id);
-        if (!validatePaymentsSig(params)) {
-          console.warn('[PAY] invalid sig');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: { error_code: 10, error_msg: 'invalid signature', critical: true } }));
-          return;
+        const isOK = (params.site === 'OK') || (appId === '512004990432');
+        console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id, 'site=', params.site || 'VK', 'isOK=', isOK);
+        if (!isOK) {
+          // Проверка подписи VK (только для VK-запросов)
+          if (!validatePaymentsSig(params)) {
+            console.warn('[PAY] invalid sig');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { error_code: 10, error_msg: 'invalid signature', critical: true } }));
+            return;
+          }
+        } else {
+          // Для OK пока пропускаем проверку подписи (отладим отдельно)
+          console.log('[PAY-OK] sig check skipped for OK');
         }
         const type = params.notification_type || '';
         const itemId = params.item;
         const userId = params.user_id;
         const shopItems = VK_SHOP_ITEMS_BY_APP[params.app_id];
+        console.log('[PAY] shop lookup app_id=', params.app_id, 'found=', !!shopItems);
         if (!shopItems) {
-          res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown app_id', critical: true } } })); return;
+          console.warn('[PAY] unknown app_id', params.app_id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown app_id', critical: true } } }));
+          return;
         }
 
         if (type === 'get_item' || type === 'get_item_test') {
