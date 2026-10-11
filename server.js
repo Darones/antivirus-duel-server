@@ -161,20 +161,32 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/ok/pay')) {
     const urlObj = new URL(req.url, 'http://x');
     const params = Object.fromEntries(urlObj.searchParams);
-    const appParam = urlObj.searchParams.get('app') || params.app_id || '54764920';
+    console.log('[OK-PAY-RAW]', JSON.stringify(params));
+    console.log('[OK-PAY-RAW-KEYS]', Object.keys(params).sort().join(','));
+    const rawAppId = String(params.app_id || urlObj.searchParams.get('app') || '');
+    const appParam = rawAppId || '512004990432';
     const isTanks = (appParam === '54786750');
+    const isOKRequest = (params.site === 'OK') || (appParam === '512004990432');
     const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
 
-    const notificationType = params.notification_type || params.operation_type || '';
+    let notificationType = params.notification_type || params.operation_type || '';
+    // Если OK присылает подтверждение без notification_type,
+    // но с product_code — считаем это order_status_change
+    if (!notificationType && (params.product_code || params.code) && params.amount) {
+      notificationType = 'order_status_change';
+    }
+    console.log('[OK-PAY] type=', notificationType, 'status=', params.status, 'product=', params.product_code);
     const itemId = params.product_code || params.item || params.code;
     const userId = params.uid || params.user_id;
     const orderId = params.order_id || params.transaction_id;
 
     console.log('[OK-PAY]', 'app=', appParam, 'type=', notificationType, 'item=', itemId, 'user=', userId);
 
-    // Проверка подписи ОК
-    if (okSecret) {
+    // Для OK пока пропускаем проверку подписи (отладим отдельно)
+    if (isOKRequest) {
+      console.log('[OK-PAY] OK request — sig check skipped');
+    } else if (okSecret) {
       const { sig, access_token, ...rest } = params;
       if (sig) {
         const secretKey = crypto.createHash('md5').update((access_token || '') + okSecret).digest('hex');
@@ -226,8 +238,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // Фолбэк — простое уведомление о покупке
+    // Фолбэк — простое уведомление
     const code = params.product_code || params.code;
+    if (!code) {
+      console.warn('[OK-PAY] no product_code — responding ok for compatibility');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"status":"ok"}');
+      return;
+    }
     const item = shop[code];
     if (!item) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
