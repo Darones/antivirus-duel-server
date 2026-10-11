@@ -19,8 +19,8 @@ const OK_APP_SECRET_TANKS = process.env.OK_APP_SECRET_TANKS || '';
 
 // [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
-  bombs_pack:     { title: 'Набор бомб ×5',  price: 10, photo_url: 'https://darones.github.io/antivirus/logo.png' },
-  bombs_pack_big: { title: 'Набор бомб ×20', price: 25, photo_url: 'https://darones.github.io/antivirus/logo.png' },
+  bombs_pack:     { title: 'Набор бомб ×5',  price: 5,  photo_url: 'https://darones.github.io/antivirus/logo.png' },
+  bombs_pack_big: { title: 'Набор бомб ×20', price: 15, photo_url: 'https://darones.github.io/antivirus/logo.png' },
   remove_ads:     { title: 'Убрать рекламу', price: 10, photo_url: 'https://darones.github.io/antivirus/logo.png' },
 };
 const VK_SHOP_ITEMS_BY_APP = {
