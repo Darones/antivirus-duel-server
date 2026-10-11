@@ -160,34 +160,87 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/ok/pay')) {
     const urlObj = new URL(req.url, 'http://x');
     const params = Object.fromEntries(urlObj.searchParams);
-    const appParam = urlObj.searchParams.get('app') || '54764920';
+    const appParam = urlObj.searchParams.get('app') || params.app_id || '54764920';
     const isTanks = (appParam === '54786750');
     const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
-    console.log('[OK-PAY]', 'app=', appParam, params.operation_type || params.method || '-', 'code=', params.product_code, 'user=', params.uid);
-    if (!validateOKSig(params, okSecret)) {
-      console.warn('[OK-PAY] invalid sig');
-      res.writeHead(200); res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}'); return;
+
+    const notificationType = params.notification_type || params.operation_type || '';
+    const itemId = params.product_code || params.item || params.code;
+    const userId = params.uid || params.user_id;
+    const orderId = params.order_id || params.transaction_id;
+
+    console.log('[OK-PAY]', 'app=', appParam, 'type=', notificationType, 'item=', itemId, 'user=', userId);
+
+    // Проверка подписи ОК
+    if (okSecret) {
+      const { sig, access_token, ...rest } = params;
+      if (sig) {
+        const secretKey = crypto.createHash('md5').update((access_token || '') + okSecret).digest('hex');
+        const sorted = Object.keys(rest).sort().map(k => k + '=' + rest[k]).join('&');
+        const expected = crypto.createHash('md5').update(sorted + secretKey).digest('hex');
+        if (expected !== sig) {
+          console.warn('[OK-PAY] invalid sig');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}');
+          return;
+        }
+      }
     }
-    // ОК может запрашивать подтверждение платежа
+
+    // get_item — запрос информации о товаре
+    if (notificationType === 'get_item' || notificationType === 'get_item_test') {
+      const item = shop[itemId];
+      if (!item) {
+        console.warn('[OK-PAY] unknown item', itemId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { error_code: 20, error_msg: 'Unknown item', critical: true } }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        response: {
+          title: item.title,
+          price: item.price,
+          photo_url: item.photo_url || '',
+          item_id: itemId
+        }
+      }));
+      return;
+    }
+
+    // order_status_change — подтверждение покупки
+    if (notificationType === 'order_status_change' || notificationType === 'order_status_change_test') {
+      if (params.status === 'chargeable') {
+        const item = shop[itemId];
+        if (item) {
+          const set = purchases.get(userId) || new Set();
+          set.add(itemId);
+          purchases.set(userId, set);
+          console.log('[OK-PAY] granted', itemId, 'to', userId);
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response: { order_id: orderId, app_order_id: Date.now() } }));
+      return;
+    }
+
+    // Фолбэк — простое уведомление о покупке
     const code = params.product_code || params.code;
     const item = shop[code];
-    const amount = Number(params.amount);
-    if (!item || item.price !== amount) {
-      console.warn('[OK-PAY] invalid product or amount', code, params.amount);
+    if (!item) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"error_code":1001,"error_msg":"Invocation-error"}'); return;
+      res.end('{"status":"error","error_code":1001,"error_msg":"Unknown product"}');
+      return;
     }
-    const userId = params.uid;
-    const set = purchases.get(userId) || new Set();
+    const userIdFallback = params.uid;
+    const set = purchases.get(userIdFallback) || new Set();
     set.add(code);
-    purchases.set(userId, set);
-    console.log('[OK-PAY] granted', code, 'to', userId);
+    purchases.set(userIdFallback, set);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"status":"ok"}');
     return;
   }
-
   // [PAYMENTS] Обработка платёжных уведомлений VK
   if (req.url === '/vk/pay' && req.method === 'POST') {
     let body = '';
