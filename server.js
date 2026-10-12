@@ -139,9 +139,10 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/stats/data')) {
     const urlObj = new URL(req.url, 'http://x');
     const token = urlObj.searchParams.get('token') || '';
+    const appFilter = urlObj.searchParams.get('app') || 'antivirus';
     if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(buildStatsSummary()));
+    res.end(JSON.stringify(buildStatsSummary(appFilter)));
     return;
   }
 
@@ -149,9 +150,10 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/stats/dashboard')) {
     const urlObj = new URL(req.url, 'http://x');
     const token = urlObj.searchParams.get('token') || '';
+    const appFilter = urlObj.searchParams.get('app') || 'antivirus';
     if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(renderStatsDashboard(token));
+    res.end(renderStatsDashboard(token, appFilter));
     return;
   }
   if (req.url === '/health') {
@@ -502,12 +504,18 @@ setInterval(() => {
   }
 }, 5000);
 
-function buildStatsSummary() {
+function buildStatsSummary(appFilter) {
   let lines = [];
   try { lines = fs.readFileSync(STATS_FILE, 'utf8').split('\n').filter(Boolean); } catch { lines = []; }
+  const filter = appFilter || 'antivirus';
   const events = [];
   for (const line of lines) {
-    try { events.push(JSON.parse(line)); } catch {}
+    try {
+      const e = JSON.parse(line);
+      const eApp = e.app || 'antivirus';
+      if (filter !== 'all' && eApp !== filter) continue;
+      events.push(e);
+    } catch {}
   }
   const byDay = {};
   const players = new Set();
@@ -647,7 +655,8 @@ function buildStatsSummary() {
   };
 }
 
-function renderStatsDashboard(token) {
+function renderStatsDashboard(token, appFilter) {
+  const safeApp = (appFilter || 'antivirus').replace(/[^a-z0-9_-]/gi, '');
   return `<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><title>Антивирус — Статистика</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -667,7 +676,7 @@ tr:last-child td{border-bottom:none}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:760px){.cols{grid-template-columns:1fr}}
 </style></head><body>
-<h1> Антивирус — статистика</h1>
+<h1 id="pageTitle"> Антивирус — статистика</h1>
 <p id="updated" style="color:#64748b"></p>
 
 <div class="cards" id="cards"></div>
@@ -698,12 +707,13 @@ tr:last-child td{border-bottom:none}
 
 <script>
 const TOKEN = ${JSON.stringify(token)};
+const APP = ${JSON.stringify(safeApp)};
 function updateTitleBadge(online){
   document.title=online>0?' '+online+' онлайн — Антивирус':'Антивирус — Статистика';
 }
 async function refresh(){
   try{
-    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN));
+    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN)+'&app='+encodeURIComponent(APP));
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
     document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
