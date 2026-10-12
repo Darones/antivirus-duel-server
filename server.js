@@ -168,7 +168,11 @@ const server = http.createServer((req, res) => {
     const rawAppId = String(params.app_id || urlObj.searchParams.get('app') || '');
     const appParam = rawAppId || '512004990432';
     const isTanks = (appParam === '54786750') || (appParam === '512005381577');
-    const isOKRequest = (params.site === 'OK') || (appParam === '512004990432') || (appParam === '512005381577');
+    const isOKRequest = (params.site === 'OK')
+                   || (appParam === '512004990432')
+                   || (appParam === '512005381577')
+                   || (appParam === '54786750')
+                   || (params.method === 'callbacks.payment');
     const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
 
