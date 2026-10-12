@@ -23,13 +23,15 @@ const SHOP_ITEMS = {
   bombs_pack_big: { title: 'Набор бомб ×20', price: 15, photo_url: 'https://darones.github.io/antivirus/logo.png' },
   remove_ads:     { title: 'Убрать рекламу', price: 10, photo_url: 'https://darones.github.io/antivirus/logo.png' },
 };
+const TANKS_SHOP_ITEMS = {
+  tanks_coins_small:  { title: '10 000 монет', price: 5,  photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+  tanks_coins_medium: { title: '25 000 монет', price: 10, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+  tanks_coins_large:  { title: '60 000 монет', price: 20, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+};
 const VK_SHOP_ITEMS_BY_APP = {
   '54764920': SHOP_ITEMS,
-  '54786750': {
-    tanks_coins_small:  { title: '10 000 монет', price: 5, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
-    tanks_coins_medium: { title: '25 000 монет', price: 10, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
-    tanks_coins_large:  { title: '60 000 монет', price: 20, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
-  },
+  '54786750':      TANKS_SHOP_ITEMS,
+  '512005381577':  TANKS_SHOP_ITEMS,
   '512004990432': SHOP_ITEMS,
 };
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
@@ -50,8 +52,8 @@ function validateOKSig(params, secretOverride) {
 
 function validatePaymentsSig(params) {
   const appId = String(params.app_id || '');
-  const isOK = (params.site === 'OK') || (appId === '512004990432');
-  const isTanks = (appId === '54786750');
+  const isOK = (params.site === 'OK') || (appId === '512004990432') || (appId === '512005381577');
+  const isTanks = (appId === '54786750') || (appId === '512005381577');
 
   let secret;
   if (isOK) secret = OK_APP_SECRET;
@@ -165,8 +167,8 @@ const server = http.createServer((req, res) => {
     console.log('[OK-PAY-RAW-KEYS]', Object.keys(params).sort().join(','));
     const rawAppId = String(params.app_id || urlObj.searchParams.get('app') || '');
     const appParam = rawAppId || '512004990432';
-    const isTanks = (appParam === '54786750');
-    const isOKRequest = (params.site === 'OK') || (appParam === '512004990432');
+    const isTanks = (appParam === '54786750') || (appParam === '512005381577');
+    const isOKRequest = (params.site === 'OK') || (appParam === '512004990432') || (appParam === '512005381577');
     const shop = VK_SHOP_ITEMS_BY_APP[appParam] || SHOP_ITEMS;
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
 
@@ -280,7 +282,7 @@ const server = http.createServer((req, res) => {
         console.log('[RAW] FULL PARAMS:', JSON.stringify(params));
         console.log('[RAW] keys:', Object.keys(params).sort().join(','));
         const appId = String(params.app_id || '');
-        const isOK = (params.site === 'OK') || (appId === '512004990432');
+        const isOK = (params.site === 'OK') || (appId === '512004990432') || (appId === '512005381577');
         console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id, 'site=', params.site || 'VK', 'isOK=', isOK);
         if (!isOK) {
           // Проверка подписи VK (только для VK-запросов)
