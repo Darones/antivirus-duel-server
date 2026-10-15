@@ -1,2 +1,4 @@
 ﻿backups/
 patch-*.js
+
+node_modules/

@@ -4,7 +4,65 @@ const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
+
+// [STATS] Persistent statistics in Postgres.
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const pgPool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: false,
+      max: 10,
+      idleTimeoutMillis: 30000,
+    })
+  : null;
+
+async function initStatsTable() {
+  if (!pgPool) { console.warn('[STATS] DATABASE_URL \u043d\u0435 \u0437\u0430\u0434\u0430\u043d\u043e, \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u043c \u0447\u0435\u0440\u0435\u0437 \u0444\u0430\u0439\u043b'); return; }
+  try {
+    await pgPool.query([
+      'CREATE TABLE IF NOT EXISTS events (',
+      '  id BIGSERIAL PRIMARY KEY,',
+      '  t BIGINT NOT NULL,',
+      "  app TEXT NOT NULL DEFAULT 'antivirus',",
+      '  ev TEXT NOT NULL,',
+      '  player_id TEXT,',
+      '  session_id TEXT,',
+      "  payload JSONB NOT NULL DEFAULT '{}'::jsonb,",
+      '  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()',
+      ');',
+      'CREATE INDEX IF NOT EXISTS idx_events_app_t ON events (app, t DESC);',
+      'CREATE INDEX IF NOT EXISTS idx_events_ev ON events (ev);'
+    ].join(String.fromCharCode(10)));
+    console.log('[STATS] Postgres table ready');
+    // Migrate events.jsonl once when the database is empty.
+    try {
+      if (fs.existsSync(STATS_FILE)) {
+        const lines = fs.readFileSync(STATS_FILE, 'utf8').split(String.fromCharCode(10)).filter(Boolean);
+        if (lines.length > 0) {
+          const { rows } = await pgPool.query('SELECT COUNT(*)::int AS c FROM events');
+          if (rows[0].c === 0) {
+            console.log('[STATS] Migrating', lines.length, 'events from file...');
+            for (const line of lines) {
+              try {
+                const e = JSON.parse(line);
+                await pgPool.query(
+                  'INSERT INTO events (t, app, ev, player_id, session_id, payload) VALUES ($1,$2,$3,$4,$5,$6)',
+                  [e.t || 0, e.app || 'antivirus', e.ev || 'unknown', e.playerId || null, e.sessionId || null, e]
+                );
+              } catch (err) { /* skip bad line */ }
+            }
+            console.log('[STATS] Migration done');
+            fs.renameSync(STATS_FILE, STATS_FILE + '.migrated');
+          }
+        }
+      }
+    } catch (e) { console.warn('[STATS] Migration failed:', e.message); }
+  } catch (e) {
+    console.error('[STATS] Table init failed:', e.message);
+  }
+}
 const STATS_TOKEN = process.env['STATS_TOKEN'] || 'change-me-antivirus-stats';
 
 const PORT = process.env.PORT || 3000;
@@ -101,13 +159,34 @@ const server = http.createServer((req, res) => {
   if (req.url === '/stats/event' && req.method === 'POST') {
     let body = '';
     req.on('data', c => { body += c; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
         const events = Array.isArray(data?.events) ? data.events : [];
         if (events.length === 0) { res.writeHead(200); res.end('{"ok":true}'); return; }
-        const lines = events.map(e => JSON.stringify(e)).join('\n') + '\n';
-        fs.appendFileSync(STATS_FILE, lines, 'utf8');
+        if (pgPool) {
+          const values = [];
+          const placeholders = [];
+          let i = 1;
+          for (const e of events) {
+            placeholders.push('($' + i++ + ',$' + i++ + ',$' + i++ + ',$' + i++ + ',$' + i++ + ',$' + i++ + ')');
+            values.push(
+              Number(e.t) || 0,
+              String(e.app || 'antivirus'),
+              String(e.ev || 'unknown'),
+              e.playerId ? String(e.playerId) : null,
+              e.sessionId ? String(e.sessionId) : null,
+              JSON.stringify(e)
+            );
+          }
+          await pgPool.query(
+            'INSERT INTO events (t, app, ev, player_id, session_id, payload) VALUES ' + placeholders.join(','),
+            values
+          );
+        } else {
+          const lines = events.map(e => JSON.stringify(e)).join(String.fromCharCode(10)) + String.fromCharCode(10);
+          fs.appendFileSync(STATS_FILE, lines, 'utf8');
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, received: events.length }));
       } catch (e) {
@@ -121,28 +200,39 @@ const server = http.createServer((req, res) => {
 
   // GET /stats/reset?token=XXX ? ???????? events.jsonl
   if (req.url.startsWith('/stats/reset')) {
-    const urlObj = new URL(req.url, 'http://x');
-    const token = urlObj.searchParams.get('token') || '';
-    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
-    try {
-      fs.writeFileSync(STATS_FILE, '', 'utf8');
-      console.log('[STATS] file cleared by token');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<meta charset="utf-8"><h2>?????????? ???????</h2><p><a href="/stats/dashboard?token=' + encodeURIComponent(token) + '">? ????????</a></p>');
-    } catch (e) {
-      console.warn('[STATS] reset failed:', e.message);
-      res.writeHead(500); res.end('reset failed');
-    }
+    (async () => {
+      const urlObj = new URL(req.url, 'http://x');
+      const token = urlObj.searchParams.get('token') || '';
+      if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+      try {
+        if (pgPool) {
+          await pgPool.query('TRUNCATE events RESTART IDENTITY');
+          console.log('[STATS] DB truncated by token');
+        } else {
+          fs.writeFileSync(STATS_FILE, '', 'utf8');
+          console.log('[STATS] file cleared by token');
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<meta charset="utf-8"><h2>?????????? ???????</h2><p><a href="/stats/dashboard?token=' + encodeURIComponent(token) + '">? ????????</a></p>');
+      } catch (e) {
+        console.warn('[STATS] reset failed:', e.message);
+        res.writeHead(500); res.end('reset failed');
+      }
+    })().catch(e => { console.error('[STATS/reset]', e); res.writeHead(500); res.end('reset failed'); });
     return;
   }
+
   // GET /stats/data?token=XXX — сводка в JSON
   if (req.url.startsWith('/stats/data')) {
-    const urlObj = new URL(req.url, 'http://x');
-    const token = urlObj.searchParams.get('token') || '';
-    const appFilter = urlObj.searchParams.get('app') || 'antivirus';
-    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(buildStatsSummary(appFilter)));
+    (async () => {
+      const urlObj = new URL(req.url, 'http://x');
+      const token = urlObj.searchParams.get('token') || '';
+      const appFilter = urlObj.searchParams.get('app') || 'antivirus';
+      if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      const summary = await buildStatsSummary(appFilter);
+      res.end(JSON.stringify(summary));
+    })().catch(e => { console.error('[STATS/data]', e); res.writeHead(500); res.end('error'); });
     return;
   }
 
@@ -504,18 +594,29 @@ setInterval(() => {
   }
 }, 5000);
 
-function buildStatsSummary(appFilter) {
-  let lines = [];
-  try { lines = fs.readFileSync(STATS_FILE, 'utf8').split('\n').filter(Boolean); } catch { lines = []; }
+async function buildStatsSummary(appFilter) {
   const filter = appFilter || 'antivirus';
-  const events = [];
-  for (const line of lines) {
+  let events = [];
+  if (pgPool) {
     try {
-      const e = JSON.parse(line);
-      const eApp = e.app || 'antivirus';
-      if (filter !== 'all' && eApp !== filter) continue;
-      events.push(e);
-    } catch {}
+      const query = filter === 'all'
+        ? 'SELECT payload FROM events ORDER BY t ASC'
+        : 'SELECT payload FROM events WHERE app = $1 ORDER BY t ASC';
+      const params = filter === 'all' ? [] : [filter];
+      const { rows } = await pgPool.query(query, params);
+      events = rows.map(r => r.payload);
+    } catch (e) { console.warn('[STATS] DB read failed:', e.message); events = []; }
+  } else {
+    let lines = [];
+    try { lines = fs.readFileSync(STATS_FILE, 'utf8').split(String.fromCharCode(10)).filter(Boolean); } catch { lines = []; }
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        const eApp = e.app || 'antivirus';
+        if (filter !== 'all' && eApp !== filter) continue;
+        events.push(e);
+      } catch {}
+    }
   }
   const byDay = {};
   const players = new Set();
@@ -803,7 +904,15 @@ load();
 </script>
 </body></html>`;
 }
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`⚔ Duel server on port ${PORT}`);
-  console.log(`   Health: http://0.0.0.0:${PORT}/health`);
+initStatsTable().then(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log('\u2694 Duel server on port ' + PORT);
+    console.log('   Health: http://0.0.0.0:' + PORT + '/health');
+    console.log('   Stats: ' + (pgPool ? 'Postgres' : 'file (no DATABASE_URL)'));
+  });
+}).catch(e => {
+  console.error('[BOOT] init failed:', e);
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log('\u2694 Duel server on port ' + PORT + ' (\u0431\u0435\u0437 \u0411\u0414)');
+  });
 });
