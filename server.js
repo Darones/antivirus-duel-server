@@ -762,53 +762,52 @@ function renderStatsDashboard(token, appFilter) {
 <meta charset="utf-8"><title>Антивирус — Статистика</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-body{font:14px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:20px}
-h1{margin:0 0 6px;font-size:22px}
-h2{font-size:16px;margin:24px 0 10px;color:#334155}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:12px 0}
-.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px}
-.card b{display:block;font-size:22px;color:#6366f1}
-.card small{color:#64748b}
-.chart-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin:8px 0}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;font-size:13px}
-th,td{padding:6px 10px;text-align:left;border-bottom:1px solid #e2e8f0}
-th{background:#f1f5f9;font-weight:700}
+body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:10px;overflow:hidden}
+h1{margin:0 0 4px;font-size:18px}
+h2{font-size:13px;margin:0 0 4px;color:#334155;font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:6px 0 10px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;text-align:center}
+.card b{display:block;font-size:20px;color:#6366f1;line-height:1.1}
+.card.card-online{background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-color:#059669}
+.card.card-online b{color:#fff;font-size:26px}
+.card.card-online small{color:#d1fae5}
+.card small{color:#64748b;font-size:10px}
+.panels{display:grid;grid-template-columns:minmax(240px,1fr) 1.6fr;gap:10px;align-items:start}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #e2e8f0}
+th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
 tr:last-child td{border-bottom:none}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.tbl-scroll{max-height:440px;overflow-y:auto}
+.funnel-wrap{position:relative;height:440px}
+@media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
 </style></head><body>
-<h1 id="pageTitle"> Антивирус — статистика</h1>
-<p id="updated" style="color:#64748b"></p>
+<h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
+<p id="updated" style="color:#64748b;font-size:11px;margin:0 0 6px"></p>
 
 <div class="cards" id="cards"></div>
 
-<div class="chart-wrap"><canvas id="chOnlineHistory" height="140"></canvas></div>
-
-<h2>Активные сейчас (последние 3 минуты)</h2>
-<div class="chart-wrap"><table id="tblOnline"></table></div>
-
-<div class="cols">
-  <div class="chart-wrap"><canvas id="chDays" height="180"></canvas></div>
-  <div class="chart-wrap"><canvas id="chEvents" height="180"></canvas></div>
-</div>
-
-<h2>Воронка по уровням</h2>
-<div class="chart-wrap"><canvas id="chFunnel" height="220"></canvas></div>
-
-<div class="cols">
-  <div>
-    <h2>Экраны (всего переходов)</h2>
-    <table id="tblScreens"></table>
+<div class="panels">
+  <div class="panel">
+    <h2>Активные сейчас</h2>
+    <div class="tbl-scroll"><table id="tblOnline"></table></div>
   </div>
-  <div>
-    <h2>Последний экран перед закрытием</h2>
-    <table id="tblLastScreen"></table>
+  <div class="panel">
+    <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
+    <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
 </div>
-
 <script>
 const TOKEN = ${JSON.stringify(token)};
 const APP = ${JSON.stringify(safeApp)};
+const SCREEN_NAMES = {
+  'welcome':'Приветствие','story':'Сюжет','menu':'Меню','levels':'Выбор ур.',
+  'game':'Игра','pause':'Пауза','end':'Конец ур.','shop':'Магазин',
+  'daily':'Бонус','settings':'Настройки','records':'Рекорды','duel':'Дуэль',
+  'duel-share':'Дуэль: пригл.','duel-waiting':'Дуэль: ожид.',
+  'duel-countdown':'Дуэль: отсчёт','boot':'Загрузка','characters-test':'Тест'
+};
+function ruScreen(key){ return key ? (SCREEN_NAMES[key] || key) : '—'; }
 function updateTitleBadge(online){
   document.title=online>0?' '+online+' онлайн — Антивирус':'Антивирус — Статистика';
 }
@@ -827,77 +826,52 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();
 function renderCards(d){
   const c = document.getElementById('cards');
   const items = [
-    ['Онлайн сейчас', d.onlineNowCount],
-    ['Пик за сутки', d.onlinePeak24h],
-    ['Уникальных игроков', d.uniquePlayers],
-    ['Всего событий', d.totalEvents],
-    ['Средняя сессия', d.avgSessionSec ? d.avgSessionSec + ' сек' : '—'],
-    ['Покупок', d.purchases],
-    ['Реклама ок', d.adWatched],
-    ['Реклама провал', d.adFailed]
+    ['Онлайн',     d.onlineNowCount, true],
+    ['Пик 24ч',    d.onlinePeak24h,  false],
+    ['Игроков',    d.uniquePlayers,  false],
+    ['Событий',    d.totalEvents,    false],
+    ['Ср. сессия', d.avgSessionSec ? Math.round(d.avgSessionSec/60) + ' мин' : '—', false],
+    ['Покупок',    d.purchases,      false],
+    ['Реклама ОК', d.adWatched,      false],
+    ['Реклама ✗',  d.adFailed,       false]
   ];
-  c.innerHTML = items.map(([t,v]) => '<div class="card"><b>'+v+'</b><small>'+t+'</small></div>').join('');
+  c.innerHTML = items.map(([t,v,hl]) =>
+    '<div class="card'+(hl?' card-online':'')+'"><b>'+v+'</b><small>'+t+'</small></div>'
+  ).join('');
 }
 let charts = {};
 function renderCharts(d){
-  const labels = d.days.map(x => x.day.slice(5));
-  if(charts.days) charts.days.destroy();
-  charts.days = new Chart(document.getElementById('chDays'), {
-    type:'line',
-    data:{ labels, datasets:[
-      { label:'Игроки', data:d.days.map(x=>x.players), borderColor:'#6366f1', backgroundColor:'#6366f133', tension:.3, fill:true },
-      { label:'Сессии', data:d.days.map(x=>x.sessions), borderColor:'#f59e0b', backgroundColor:'#f59e0b33', tension:.3, fill:true }
-    ]},
-    options:{ responsive:true, plugins:{ title:{display:true,text:'Игроки и сессии по дням'} } }
-  });
-
-  const evLabels = Object.keys(d.eventCounts).sort((a,b)=>d.eventCounts[b]-d.eventCounts[a]).slice(0,10);
-  if(charts.events) charts.events.destroy();
-  charts.events = new Chart(document.getElementById('chEvents'), {
-    type:'bar',
-    data:{ labels:evLabels, datasets:[{ label:'Событий', data:evLabels.map(k=>d.eventCounts[k]), backgroundColor:'#6366f1' }]},
-    options:{ responsive:true, indexAxis:'y', plugins:{ title:{display:true,text:'Топ событий'} } }
-  });
-
   if(charts.funnel) charts.funnel.destroy();
-  charts.funnel = new Chart(document.getElementById('chFunnel'), {
+  const cv = document.getElementById('chFunnel');
+  if(!cv) return;
+  charts.funnel = new Chart(cv, {
     type:'bar',
     data:{ labels:d.funnel.map(x=>'Ур.'+x.level), datasets:[
-      { label:'Начали', data:d.funnel.map(x=>x.started), backgroundColor:'#94a3b8' },
-      { label:'Победили', data:d.funnel.map(x=>x.won), backgroundColor:'#10b981' },
-      { label:'Проиграли', data:d.funnel.map(x=>x.lost), backgroundColor:'#ef4444' }
+      { label:'Начали',    data:d.funnel.map(x=>x.started), backgroundColor:'#94a3b8' },
+      { label:'Прошли',    data:d.funnel.map(x=>x.won),     backgroundColor:'#10b981' },
+      { label:'Проиграли', data:d.funnel.map(x=>x.lost),    backgroundColor:'#ef4444' }
     ]},
-    options:{ responsive:true, scales:{ x:{stacked:true}, y:{stacked:true} } }
-  });
-
-  if(charts.online) charts.online.destroy();
-  charts.online = new Chart(document.getElementById('chOnlineHistory'), {
-    type:'line',
-    data:{ labels:(d.historyOnline||[]).map(x=>x.offsetMin===0?'сейчас':x.offsetMin+'м'), datasets:[{ label:'Онлайн', data:(d.historyOnline||[]).map(x=>x.online), borderColor:'#10b981', backgroundColor:'#10b98133', tension:.3, fill:true, pointRadius:2 }]},
-    options:{ responsive:true, plugins:{ title:{display:true,text:'Онлайн за последний час'} }, scales:{ y:{beginAtZero:true,ticks:{precision:0}} } }
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{labels:{boxWidth:10,font:{size:11}}} },
+      scales:{ x:{stacked:true,ticks:{font:{size:9}}}, y:{stacked:true,ticks:{font:{size:9}}} }
+    }
   });
 }
 function renderTables(d){
-  const t1 = document.getElementById('tblScreens');
-  const rows1 = Object.entries(d.screens).sort((a,b)=>b[1]-a[1]);
-  t1.innerHTML = '<tr><th>Экран</th><th>Раз</th></tr>' + rows1.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v+'</td></tr>').join('');
-  const t2 = document.getElementById('tblLastScreen');
-  const rows2 = Object.entries(d.lastScreen).sort((a,b)=>b[1]-a[1]);
-  t2.innerHTML = '<tr><th>Экран</th><th>Уходов</th></tr>' + rows2.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v+'</td></tr>').join('');
   function esc(s){
     return String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
-  const t3=document.getElementById('tblOnline');
-  if(t3){
-    const rows=(d.onlineNow||[]).slice().sort((a,b)=>a.ageSec-b.ageSec);
-    if(rows.length===0){
-      t3.innerHTML='<tr><td style="color:#64748b">Никого — все ушли</td></tr>';
-    }else{
-      t3.innerHTML='<tr><th>Игрок</th><th>Платформа</th><th>Экран</th><th>Уровень</th><th>Тишина</th></tr>'
-        + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(r.screen||'—')+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+' сек</td></tr>').join('');
-    }
+  const t3 = document.getElementById('tblOnline');
+  if(!t3) return;
+  const rows = (d.onlineNow || []).slice().sort((a,b)=>a.ageSec-b.ageSec);
+  if(rows.length === 0){
+    t3.innerHTML = '<tr><td style="color:#64748b">Никого — все ушли</td></tr>';
+  } else {
+    t3.innerHTML = '<tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
+      + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
   }
 }
 load();
