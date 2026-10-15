@@ -6,6 +6,17 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
+// ID, ??????? ??????? ?? ???????? ? ?????????? (???????? ????????)
+const IGNORED_PLAYER_IDS = new Set([
+  '29506969',           // ?????? VK
+  '560206319344',       // ?????? OK
+  'ok_560206319344',    // ?????? OK (? ?????????)
+  'ok_29506969',        // ?????? VK ? OK-???????
+]);
+function isIgnoredPlayer(playerId){
+  if(!playerId) return false;
+  return IGNORED_PLAYER_IDS.has(String(playerId));
+}
 
 // [STATS] Persistent statistics in Postgres.
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -36,6 +47,14 @@ async function initStatsTable() {
       'CREATE INDEX IF NOT EXISTS idx_events_ev ON events (ev);'
     ].join(String.fromCharCode(10)));
     console.log('[STATS] Postgres table ready');
+    try {
+      const ids = [...IGNORED_PLAYER_IDS];
+      const r = await pgPool.query(
+        'DELETE FROM events WHERE player_id = ANY($1::text[])',
+        [ids]
+      );
+      if (r.rowCount > 0) console.log('[STATS] Removed', r.rowCount, 'events from test accounts');
+    } catch (e) { console.warn('[STATS] Cleanup failed:', e.message); }
     // Migrate events.jsonl once when the database is empty.
     try {
       if (fs.existsSync(STATS_FILE)) {
@@ -162,7 +181,8 @@ const server = http.createServer((req, res) => {
     req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const events = Array.isArray(data?.events) ? data.events : [];
+        const rawEvents = Array.isArray(data?.events) ? data.events : [];
+        const events = rawEvents.filter(e => !isIgnoredPlayer(e.playerId));
         if (events.length === 0) { res.writeHead(200); res.end('{"ok":true}'); return; }
         if (pgPool) {
           const values = [];
@@ -604,7 +624,7 @@ async function buildStatsSummary(appFilter) {
         : 'SELECT payload FROM events WHERE app = $1 ORDER BY t ASC';
       const params = filter === 'all' ? [] : [filter];
       const { rows } = await pgPool.query(query, params);
-      events = rows.map(r => r.payload);
+      events = rows.map(r => r.payload).filter(e => !isIgnoredPlayer(e.playerId));
     } catch (e) { console.warn('[STATS] DB read failed:', e.message); events = []; }
   } else {
     let lines = [];
@@ -614,6 +634,7 @@ async function buildStatsSummary(appFilter) {
         const e = JSON.parse(line);
         const eApp = e.app || 'antivirus';
         if (filter !== 'all' && eApp !== filter) continue;
+        if (isIgnoredPlayer(e.playerId)) continue;
         events.push(e);
       } catch {}
     }
@@ -814,7 +835,7 @@ th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #e2e8f0}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
 tr:last-child td{border-bottom:none}
 .tbl-scroll{max-height:440px;overflow-y:auto}
-.funnel-wrap{position:relative;height:640px}
+.funnel-wrap{position:relative;height:320px}
 .log-scroll{
   max-height:260px;
   overflow-y:auto;
@@ -859,7 +880,7 @@ tr:last-child td{border-bottom:none}
     <h2>Активные сейчас</h2>
     <div class="tbl-scroll" style="max-height:150px"><table id="tblOnline"></table></div>
   </div>
-  <div class="panel" style="grid-row:span 3">
+  <div class="panel" style="grid-row:span 2">
     <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
     <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
@@ -930,8 +951,9 @@ function renderCharts(d){
     ]},
     options:{
       responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{labels:{boxWidth:10,font:{size:11}}} },
-      scales:{ x:{stacked:true,ticks:{font:{size:9}}}, y:{stacked:true,ticks:{font:{size:9}}} }
+      plugins:{ legend:{labels:{boxWidth:8,font:{size:9}}} },
+      scales:{ x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}},
+               y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} }
     }
   });
 }
