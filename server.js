@@ -758,6 +758,18 @@ async function buildStatsSummary(appFilter) {
       ok: e.ok === true ? true : (e.ok === false ? false : null)
     }));
 
+  // Топ игроков по количеству заходов (session_start)
+  const playerSessions = new Map();
+  for(const e of events){
+    if(e.ev === 'session_start' && e.playerId){
+      playerSessions.set(e.playerId, (playerSessions.get(e.playerId) || 0) + 1);
+    }
+  }
+  const topPlayers = [...playerSessions.entries()]
+    .map(([playerId, count]) => ({ playerId, count }))
+    .sort((a,b) => b.count - a.count)
+    .slice(0, 100);
+
   return {
     totalEvents: events.length,
     uniquePlayers: players.size,
@@ -774,7 +786,8 @@ async function buildStatsSummary(appFilter) {
     onlineNow: onlineNow.slice(0,20),
     onlinePeak24h: peak,
     historyOnline,
-    recentLog: logEvents
+    recentLog: logEvents,
+    topPlayers
   };
 }
 
@@ -822,6 +835,18 @@ tr:last-child td{border-bottom:none}
 .log-text.bad{color:#fca5a5}
 .log-text.warn{color:#fcd34d}
 .log-text.pay{color:#c4b5fd}
+.top-players-scroll{max-height:200px;overflow-y:auto;font-size:11px}
+.top-players-scroll table{margin:0}
+.top-players-scroll th,.top-players-scroll td{padding:3px 6px}
+.expand-btn{float:right;font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
+.expand-btn:hover{background:#e2e8f0}
+#topPlayersPanel.expanded{
+  position:fixed;inset:0;z-index:1000;padding:20px;overflow-y:auto;border-radius:0;
+  background:#f8fafc;border:none;
+}
+#topPlayersPanel.expanded .top-players-scroll{max-height:none}
+#topPlayersPanel.expanded h2{font-size:16px}
+#topPlayersPanel.expanded .top-players-scroll td{font-size:13px;padding:5px 10px}
 @media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
 </style></head><body>
 <h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
@@ -843,6 +868,13 @@ tr:last-child td{border-bottom:none}
     <div class="log-scroll" id="logBox"></div>
   </div>
 </div>
+
+<div class="panel" id="topPlayersPanel" style="margin-top:10px">
+  <h2>Топ игроков по заходам
+    <button id="topPlayersExpand" class="expand-btn" onclick="toggleTopPlayers()">⛶ Развернуть</button>
+  </h2>
+  <div class="top-players-scroll" id="topPlayersBox"></div>
+</div>
 <script>
 const TOKEN = ${JSON.stringify(token)};
 const APP = ${JSON.stringify(safeApp)};
@@ -863,7 +895,7 @@ async function refresh(){
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
     document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
-    renderCards(d);renderCharts(d);renderTables(d);renderLog(d);updateTitleBadge(d.onlineNowCount||0);
+    renderCards(d);renderCharts(d);renderTables(d);renderLog(d);renderTopPlayers(d);updateTitleBadge(d.onlineNowCount||0);
   }catch(e){console.warn('refresh fail',e);}
 }
 refresh();
@@ -920,6 +952,35 @@ function renderTables(d){
       + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
   }
 }
+function escHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function renderTopPlayers(d){
+  const box = document.getElementById('topPlayersBox');
+  if(!box) return;
+  const rows = d.topPlayers || [];
+  if(rows.length === 0){
+    box.innerHTML = '<div style="color:#64748b;font-size:11px;padding:6px">Пока никого</div>';
+    return;
+  }
+  box.innerHTML = '<table><tr><th style="width:40px">#</th><th>Игрок</th><th style="width:90px">Заходов</th></tr>'
+    + rows.map((r,i) =>
+        '<tr><td>'+(i+1)+'</td><td>'+escHtml(r.playerId)+'</td><td><b>'+r.count+'</b></td></tr>'
+      ).join('') + '</table>';
+}
+
+function toggleTopPlayers(){
+  const panel = document.getElementById('topPlayersPanel');
+  if(!panel) return;
+  panel.classList.toggle('expanded');
+  const btn = document.getElementById('topPlayersExpand');
+  if(btn) btn.textContent = panel.classList.contains('expanded') ? '✕ Свернуть' : '⛶ Развернуть';
+  document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
+}
+
 function renderLog(d){
   const box = document.getElementById('logBox');
   if(!box) return;
