@@ -801,9 +801,9 @@ th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #e2e8f0}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
 tr:last-child td{border-bottom:none}
 .tbl-scroll{max-height:440px;overflow-y:auto}
-.funnel-wrap{position:relative;height:440px}
+.funnel-wrap{position:relative;height:560px}
 .log-scroll{
-  max-height:240px;
+  max-height:260px;
   overflow-y:auto;
   font-family:'SF Mono','Consolas',monospace;
   font-size:11.5px;
@@ -832,17 +832,16 @@ tr:last-child td{border-bottom:none}
 <div class="panels">
   <div class="panel">
     <h2>Активные сейчас</h2>
-    <div class="tbl-scroll" style="max-height:200px"><table id="tblOnline"></table></div>
+    <div class="tbl-scroll" style="max-height:180px"><table id="tblOnline"></table></div>
   </div>
-  <div class="panel">
+  <div class="panel" style="grid-row:span 2">
     <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
     <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
-</div>
-
-<div class="panel" style="margin-top:10px">
-  <h2>Живой лог (последние события)</h2>
-  <div class="log-scroll" id="logBox"></div>
+  <div class="panel">
+    <h2>Живой лог (последние события)</h2>
+    <div class="log-scroll" id="logBox"></div>
+  </div>
 </div>
 <script>
 const TOKEN = ${JSON.stringify(token)};
