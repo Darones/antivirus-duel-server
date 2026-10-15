@@ -737,6 +737,27 @@ async function buildStatsSummary(appFilter) {
     });
   }
 
+  // Живой лог — последние 150 событий с русскими описаниями
+  const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','purchase','ad_watch','share','level_abandon']);
+  const logEvents = events
+    .filter(e => LOG_EVENTS.has(e.ev))
+    .slice(-150)
+    .reverse()
+    .map(e => ({
+      t: Number(e.t) || 0,
+      ev: e.ev,
+      player: e.playerId || '—',
+      platform: e.platform || '',
+      level: e.level ?? null,
+      mode: e.mode || '',
+      won: !!e.won,
+      screen: e.screen || '',
+      item: e.item || '',
+      kind: e.kind || '',
+      amount: e.amount ?? null,
+      ok: e.ok === true ? true : (e.ok === false ? false : null)
+    }));
+
   return {
     totalEvents: events.length,
     uniquePlayers: players.size,
@@ -752,7 +773,8 @@ async function buildStatsSummary(appFilter) {
     onlineNowCount: onlineNow.length,
     onlineNow: onlineNow.slice(0,20),
     onlinePeak24h: peak,
-    historyOnline
+    historyOnline,
+    recentLog: logEvents
   };
 }
 
@@ -780,6 +802,26 @@ th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;le
 tr:last-child td{border-bottom:none}
 .tbl-scroll{max-height:440px;overflow-y:auto}
 .funnel-wrap{position:relative;height:440px}
+.log-scroll{
+  max-height:240px;
+  overflow-y:auto;
+  font-family:'SF Mono','Consolas',monospace;
+  font-size:11.5px;
+  line-height:1.5;
+  background:#0f172a;
+  color:#e2e8f0;
+  border-radius:6px;
+  padding:6px 10px;
+}
+.log-line{display:flex;gap:8px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.log-line:last-child{border-bottom:none}
+.log-time{color:#64748b;flex-shrink:0;min-width:52px}
+.log-player{color:#94a3b8;flex-shrink:0;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.log-text{color:#e2e8f0;flex:1}
+.log-text.good{color:#86efac}
+.log-text.bad{color:#fca5a5}
+.log-text.warn{color:#fcd34d}
+.log-text.pay{color:#c4b5fd}
 @media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
 </style></head><body>
 <h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
@@ -790,12 +832,17 @@ tr:last-child td{border-bottom:none}
 <div class="panels">
   <div class="panel">
     <h2>Активные сейчас</h2>
-    <div class="tbl-scroll"><table id="tblOnline"></table></div>
+    <div class="tbl-scroll" style="max-height:200px"><table id="tblOnline"></table></div>
   </div>
   <div class="panel">
     <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
     <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
+</div>
+
+<div class="panel" style="margin-top:10px">
+  <h2>Живой лог (последние события)</h2>
+  <div class="log-scroll" id="logBox"></div>
 </div>
 <script>
 const TOKEN = ${JSON.stringify(token)};
@@ -817,7 +864,7 @@ async function refresh(){
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
     document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
-    renderCards(d);renderCharts(d);renderTables(d);updateTitleBadge(d.onlineNowCount||0);
+    renderCards(d);renderCharts(d);renderTables(d);renderLog(d);updateTitleBadge(d.onlineNowCount||0);
   }catch(e){console.warn('refresh fail',e);}
 }
 refresh();
@@ -873,6 +920,57 @@ function renderTables(d){
     t3.innerHTML = '<tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
       + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
   }
+}
+function renderLog(d){
+  const box = document.getElementById('logBox');
+  if(!box) return;
+  const rows = d.recentLog || [];
+  if(rows.length === 0){
+    box.innerHTML = '<div class="log-line"><span class="log-text" style="color:#64748b">Пока пусто</span></div>';
+    return;
+  }
+  const now = Math.floor(Date.now()/1000);
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function fmtTime(t){
+    const dt = now - t;
+    if(dt < 60) return dt + 'с';
+    if(dt < 3600) return Math.floor(dt/60) + 'м';
+    if(dt < 86400) return Math.floor(dt/3600) + 'ч';
+    return new Date(t*1000).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}) + ' ' + new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  }
+  function fmtText(r){
+    const lvl = r.level ? (' ур.' + r.level) : '';
+    switch(r.ev){
+      case 'session_start':  return 'вошёл в игру';
+      case 'level_start':    return 'начал' + (r.mode === 'endless' ? ' бесконечную' : lvl);
+      case 'level_end':
+        return r.won ? ('прошёл' + lvl) : ('проиграл' + lvl);
+      case 'level_abandon':  return 'вышел с' + lvl;
+      case 'app_close':      return 'вышел (экран: ' + (ruScreen(r.screen) || '—') + ')';
+      case 'purchase':       return 'купил: ' + (r.item || 'товар') + (r.amount ? ' (' + r.amount + ')' : '');
+      case 'ad_watch':       return 'реклама ' + (r.kind || '') + ' — ' + (r.ok ? 'ОК' : 'провал');
+      case 'share':          return 'поделился';
+      default:               return r.ev;
+    }
+  }
+  function fmtClass(r){
+    if(r.ev === 'level_end') return r.won ? 'good' : 'bad';
+    if(r.ev === 'ad_watch')  return r.ok ? 'good' : 'warn';
+    if(r.ev === 'purchase')  return 'pay';
+    if(r.ev === 'app_close') return 'warn';
+    return '';
+  }
+  box.innerHTML = rows.map(r =>
+    '<div class="log-line">' +
+      '<span class="log-time">' + fmtTime(r.t) + '</span>' +
+      '<span class="log-player">' + esc(r.player) + '</span>' +
+      '<span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span>' +
+    '</div>'
+  ).join('');
 }
 load();
 </script>
