@@ -926,25 +926,13 @@ tr:last-child td{border-bottom:none}
 .top-players-scroll th,.top-players-scroll td{padding:3px 6px}
 .expand-btn{float:right;font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
 .expand-btn:hover{background:#e2e8f0}
-#topPlayersPanel.expanded,
-#logPanel.expanded{
-  position:fixed;inset:0;z-index:1000;padding:24px 32px;overflow-y:auto;
-  border-radius:0;background:#f8fafc;border:none;
-  display:flex;flex-direction:column;gap:12px;
+#topPlayersPanel.expanded{
+  position:fixed;inset:0;z-index:1000;padding:20px;overflow-y:auto;border-radius:0;
+  background:#f8fafc;border:none;
 }
-#topPlayersPanel.expanded h2,
-#logPanel.expanded h2{font-size:20px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}
-#topPlayersPanel.expanded .top-players-scroll,
-#logPanel.expanded .log-scroll{
-  max-height:none !important;flex:1;overflow-y:auto;font-size:14px;
-}
-#topPlayersPanel.expanded .top-players-scroll th,
-#topPlayersPanel.expanded .top-players-scroll td{font-size:15px;padding:10px 16px}
-#logPanel.expanded .log-scroll{font-size:14px;padding:12px 16px}
-#logPanel.expanded .log-line{padding:4px 0;gap:14px}
-#logPanel.expanded .log-time{min-width:70px;font-size:13px}
-#logPanel.expanded .log-player{min-width:130px;font-size:13px}
-#logPanel.expanded .log-text{font-size:14px}
+#topPlayersPanel.expanded .top-players-scroll{max-height:none}
+#topPlayersPanel.expanded h2{font-size:16px}
+#topPlayersPanel.expanded .top-players-scroll td{font-size:13px;padding:5px 10px}
 @media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
 </style></head><body>
 <h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
@@ -961,9 +949,8 @@ tr:last-child td{border-bottom:none}
     <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
     <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
-  <div class="panel" id="logPanel">
-    <h2>Живой лог (последние события)
-      <button id="logExpand" class="expand-btn" onclick="toggleLog()">? ??????????</button></h2>
+  <div class="panel">
+    <h2>Живой лог (последние события)</h2>
     <div class="log-scroll" style="max-height:200px" id="logBox"></div>
   </div>
   <div class="panel" id="topPlayersPanel">
@@ -1083,13 +1070,8 @@ function renderTopPlayers(d){
 }
 
 function toggleTopPlayers(){
-  const panel = document.getElementById('topPlayersPanel');
-  if(!panel) return;
-  panel.classList.toggle('expanded');
-  const btn = document.getElementById('topPlayersExpand');
-  if(btn) btn.textContent = panel.classList.contains('expanded') ? '✕ ????????' : '⛶ ??????????';
-  document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
-}
+
+
 
 async function loadIgnoredList(){
   try{
@@ -1132,14 +1114,7 @@ async function removeIgnore(){
   document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
 }
 
-function toggleLog(){
-  const panel = document.getElementById('logPanel');
-  if(!panel) return;
-  panel.classList.toggle('expanded');
-  const btn = document.getElementById('logExpand');
-  if(btn) btn.textContent = panel.classList.contains('expanded') ? '✕ ????????' : '⛶ ??????????';
-  document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
-}
+
 function renderLog(d){
   const box = document.getElementById('logBox');
   if(!box) return;
