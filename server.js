@@ -17,24 +17,6 @@ function isIgnoredPlayer(playerId){
   if(!playerId) return false;
   return IGNORED_PLAYER_IDS.has(String(playerId));
 }
-// ???????? ?????-?????? ?? Postgres
-async function loadIgnoredPlayers(){
-  if(!pgPool) return;
-  try{
-    await pgPool.query(`
-      CREATE TABLE IF NOT EXISTS ignored_players (
-        player_id TEXT PRIMARY KEY,
-        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-    const { rows } = await pgPool.query('SELECT player_id FROM ignored_players');
-    for(const r of rows) IGNORED_PLAYER_IDS.add(r.player_id);
-    console.log('[STATS] Loaded', rows.length, 'ignored IDs from DB');
-  }catch(e){
-    console.warn('[STATS] loadIgnoredPlayers failed:', e.message);
-  }
-}
-
 
 // [STATS] Persistent statistics in Postgres.
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -65,7 +47,6 @@ async function initStatsTable() {
       'CREATE INDEX IF NOT EXISTS idx_events_ev ON events (ev);'
     ].join(String.fromCharCode(10)));
     console.log('[STATS] Postgres table ready');
-    await loadIgnoredPlayers();
     try {
       const ids = [...IGNORED_PLAYER_IDS];
       const r = await pgPool.query(
@@ -234,52 +215,6 @@ const server = http.createServer((req, res) => {
         res.end('{"ok":false}');
       }
     });
-    return;
-  }
-
-  // GET /stats/reset?token=XXX  // GET /stats/ignored?token=XXX ? ?????? ????????????
-  if (req.url.startsWith('/stats/ignored') && req.method === 'GET' && !req.url.includes('/add') && !req.url.includes('/remove')) {
-    const urlObj = new URL(req.url, 'http://x');
-    const token = urlObj.searchParams.get('token') || '';
-    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ids: [...IGNORED_PLAYER_IDS] }));
-    return;
-  }
-  if (req.url.startsWith('/stats/ignored/add')) {
-    const urlObj = new URL(req.url, 'http://x');
-    const token = urlObj.searchParams.get('token') || '';
-    const id = (urlObj.searchParams.get('id') || '').trim();
-    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
-    if (!id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"error":"id required"}'); return; }
-    (async () => { try {
-      IGNORED_PLAYER_IDS.add(id);
-      if (pgPool) {
-        await pgPool.query('INSERT INTO ignored_players (player_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
-        const del = await pgPool.query('DELETE FROM events WHERE player_id = $1', [id]);
-        console.log('[STATS] Ignored ID', id, '- removed', del.rowCount, 'events');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, id, removed: del.rowCount }));
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, id, removed: 0, note: 'no DB' }));
-      }
-    } catch(e) { console.error('[STATS/ignored/add]', e); res.writeHead(500); res.end('error'); } })();
-    return;
-  }
-  if (req.url.startsWith('/stats/ignored/remove')) {
-    const urlObj = new URL(req.url, 'http://x');
-    const token = urlObj.searchParams.get('token') || '';
-    const id = (urlObj.searchParams.get('id') || '').trim();
-    if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
-    if (!id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"error":"id required"}'); return; }
-    (async () => { try {
-      IGNORED_PLAYER_IDS.delete(id);
-      if (pgPool) await pgPool.query('DELETE FROM ignored_players WHERE player_id = $1', [id]);
-      console.log('[STATS] Removed from ignored:', id);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, id }));
-    } catch(e) { console.error('[STATS/ignored/remove]', e); res.writeHead(500); res.end('error'); } })();
     return;
   }
 
@@ -958,16 +893,6 @@ tr:last-child td{border-bottom:none}
       <button id="topPlayersExpand" class="expand-btn" onclick="toggleTopPlayers()">⛶ Развернуть</button>
     </h2>
     <div class="top-players-scroll" style="max-height:170px" id="topPlayersBox"></div>
-
-  <div style="border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px">
-    <h2 style="font-size:11px;margin-bottom:6px;color:#64748b">?????-??????</h2>
-    <div style="display:flex;gap:4px;margin-bottom:6px">
-      <input id="ignoreIdInput" type="text" placeholder="ID ??????" style="flex:1;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px;font-family:monospace">
-      <button onclick="addIgnore()" style="padding:4px 10px;background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;color:#991b1b;font-size:11px;cursor:pointer;font-weight:600">??????</button>
-      <button onclick="removeIgnore()" style="padding:4px 10px;background:#d1fae5;border:1px solid #86efac;border-radius:6px;color:#065f46;font-size:11px;cursor:pointer;font-weight:600">???????</button>
-    </div>
-    <div id="ignoreList" style="font-size:11px;color:#475569;display:flex;flex-wrap:wrap;gap:4px"></div>
-  </div>
   </div>
 </div>
 <script>
@@ -994,7 +919,6 @@ async function refresh(){
   }catch(e){console.warn('refresh fail',e);}
 }
 refresh();
-loadIgnoredList();
 setInterval(refresh,30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 function renderCards(d){
@@ -1070,42 +994,6 @@ function renderTopPlayers(d){
 }
 
 function toggleTopPlayers(){
-
-
-
-async function loadIgnoredList(){
-  try{
-    const r = await fetch('/stats/ignored?token='+encodeURIComponent(TOKEN));
-    if(!r.ok) return;
-    const d = await r.json();
-    const box = document.getElementById('ignoreList');
-    if(!box) return;
-    if(!d.ids || d.ids.length === 0){ box.innerHTML = '<span style="color:#94a3b8">?????</span>'; return; }
-    box.innerHTML = d.ids.map(id => '<span style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:10px">'+escHtml(id)+'</span>').join('');
-  }catch(e){ console.warn('loadIgnoredList', e); }
-}
-async function addIgnore(){
-  const el = document.getElementById('ignoreIdInput'); if(!el) return;
-  const id = (el.value || '').trim(); if(!id){ alert('????? ID'); return; }
-  if(!confirm('?????? ID ' + id + ' ?? ??????????? ??? ??? ??????? ????? ??????? ?? ??.')) return;
-  try{
-    const r = await fetch('/stats/ignored/add?token='+encodeURIComponent(TOKEN)+'&id='+encodeURIComponent(id), { method: 'POST' });
-    const d = await r.json();
-    if(d.ok){ el.value = ''; alert('??????. ??????? ???????: ' + (d.removed || 0)); await loadIgnoredList(); await refresh(); }
-    else alert('??????: ' + (d.error || 'unknown'));
-  }catch(e){ alert('??????: ' + e.message); }
-}
-async function removeIgnore(){
-  const el = document.getElementById('ignoreIdInput'); if(!el) return;
-  const id = (el.value || '').trim(); if(!id){ alert('????? ID'); return; }
-  try{
-    const r = await fetch('/stats/ignored/remove?token='+encodeURIComponent(TOKEN)+'&id='+encodeURIComponent(id), { method: 'POST' });
-    const d = await r.json();
-    if(d.ok){ el.value = ''; alert('ID ' + id + ' ???????? ? ??????????. ????? ??????? ????? ???????????.'); await loadIgnoredList(); await refresh(); }
-    else alert('??????: ' + (d.error || 'unknown'));
-  }catch(e){ alert('??????: ' + e.message); }
-}
-
   const panel = document.getElementById('topPlayersPanel');
   if(!panel) return;
   panel.classList.toggle('expanded');
@@ -1113,7 +1001,6 @@ async function removeIgnore(){
   if(btn) btn.textContent = panel.classList.contains('expanded') ? '✕ Свернуть' : '⛶ Развернуть';
   document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
 }
-
 
 function renderLog(d){
   const box = document.getElementById('logBox');
