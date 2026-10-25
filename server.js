@@ -874,9 +874,9 @@ tr:last-child td{border-bottom:none}
 <p id="updated" style="color:#64748b;font-size:11px;margin:0 0 10px"></p>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('combined')">Общая статистика</button>
-  <button class="tab-btn" onclick="switchTab('antivirus')">Антивирус (Dr. Mario)</button>
-  <button class="tab-btn" onclick="switchTab('match3')">Три в ряд (Match-3)</button>
+  <button class="tab-btn active" onclick="switchTab('combined', this)">Общая статистика</button>
+  <button class="tab-btn" onclick="switchTab('antivirus', this)">Антивирус (Dr. Mario)</button>
+  <button class="tab-btn" onclick="switchTab('match3', this)">Три в ряд (Match-3)</button>
 </div>
 
 <div class="cards" id="cards"></div>
@@ -920,10 +920,10 @@ const SCREEN_NAMES = {
 };
 function ruScreen(key){ return key ? (SCREEN_NAMES[key] || key) : '—'; }
 
-function switchTab(tab) {
+function switchTab(tab, btn) {
   currentTab = tab;
-  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
   if(_lastData) renderAll();
 }
 
@@ -969,18 +969,16 @@ function renderCards(d){
     '<div class="card'+(hl?' card-online':'')+'"><b>'+v+'</b><small>'+t+'</small></div>'
   ).join('');
 
-  // Реклама
   const ads = document.getElementById('tblAds');
   const rewarded = d.adRewarded || 0;
   const inter = d.adInterstitial || 0;
   const total = rewarded + inter;
   document.getElementById('adSummary').textContent = 'Всего: ' + total;
-  ads.innerHTML = `
-    <tr><th>Тип</th><th>Показов</th><th>Доля</th></tr>
-    <tr><td>Rewarded (за награду)</td><td>${rewarded}</td><td>${total ? Math.round(rewarded/total*100) : 0}%</td></tr>
-    <tr><td>Interstitial (между)</td><td>${inter}</td><td>${total ? Math.round(inter/total*100) : 0}%</td></tr>
-    <tr><td style="color:#ef4444">Ошибки/пропуски</td><td>${d.adFailed}</td><td>—</td></tr>
-  `;
+  ads.innerHTML = 
+    '<tr><th>Тип</th><th>Показов</th><th>Доля</th></tr>' +
+    '<tr><td>Rewarded (за награду)</td><td>' + rewarded + '</td><td>' + (total ? Math.round(rewarded/total*100) : 0) + '%</td></tr>' +
+    '<tr><td>Interstitial (между)</td><td>' + inter + '</td><td>' + (total ? Math.round(inter/total*100) : 0) + '%</td></tr>' +
+    '<tr><td style="color:#ef4444">Ошибки/пропуски</td><td>' + d.adFailed + '</td><td>—</td></tr>';
 }
 
 let charts = {};
@@ -1076,7 +1074,13 @@ function renderLog(d){
     if(r.ev === 'app_close') return 'warn';
     return '';
   }
-  box.innerHTML = rows.map(r => '<div class="log-line"><span class="log-time">' + fmtTime(r.t) + '</span><span class="log-player">' + esc(r.player) + '</span><span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span></div>').join('');
+  box.innerHTML = rows.map(r => 
+    '<div class="log-line">' + 
+      '<span class="log-time">' + fmtTime(r.t) + '</span>' + 
+      '<span class="log-player">' + esc(r.player) + '</span>' + 
+      '<span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span>' + 
+    '</div>'
+  ).join('');
 }
 
 function toggleFullscreen(id) {
@@ -1119,7 +1123,7 @@ function confirmReset(){if(confirm('Вы уверены, что хотите П�
 
 initStatsTable().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('🚀 [BOOT] Сервер запущен (Табы дашборда, 2 воронки, Реклама, Фиксы UI)');
+    console.log('🚀 [BOOT] Сервер запущен (Исправлены вложенные кавычки)');
     console.log('   Health: http://0.0.0.0:' + PORT + '/health');
     console.log('   Stats: ' + (pgPool ? 'Postgres' : 'file (no DATABASE_URL)'));
   });
