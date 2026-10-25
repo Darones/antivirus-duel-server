@@ -6,12 +6,13 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
-// ID, ??????? ??????? ?? ???????? ? ?????????? (???????? ????????)
+
+// ID, которые скрыты из статистики
 const IGNORED_PLAYER_IDS = new Set([
-  '29506969',           // ?????? VK
-  '560206319344',       // ?????? OK
-  'ok_560206319344',    // ?????? OK (? ?????????)
-  'ok_29506969',        // ?????? VK ? OK-???????
+  '29506969',           // тестовый VK
+  '560206319344',       // тестовый OK
+  'ok_560206319344',    // тестовый OK (с префиксом)
+  'ok_29506969',        // тестовый VK в OK-режиме
 ]);
 function isIgnoredPlayer(playerId){
   if(!playerId) return false;
@@ -30,7 +31,7 @@ const pgPool = DATABASE_URL
   : null;
 
 async function initStatsTable() {
-  if (!pgPool) { console.warn('[STATS] DATABASE_URL \u043d\u0435 \u0437\u0430\u0434\u0430\u043d\u043e, \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u043c \u0447\u0435\u0440\u0435\u0437 \u0444\u0430\u0439\u043b'); return; }
+  if (!pgPool) { console.warn('[STATS] DATABASE_URL не задано, работаем через файл'); return; }
   try {
     await pgPool.query([
       'CREATE TABLE IF NOT EXISTS events (',
@@ -218,7 +219,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /stats/reset?token=XXX ? ???????? events.jsonl
+  // GET /stats/reset?token=XXX — очистить events.jsonl
   if (req.url.startsWith('/stats/reset')) {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
@@ -233,12 +234,40 @@ const server = http.createServer((req, res) => {
           console.log('[STATS] file cleared by token');
         }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end('<meta charset="utf-8"><h2>?????????? ???????</h2><p><a href="/stats/dashboard?token=' + encodeURIComponent(token) + '">? ????????</a></p>');
+        res.end('<meta charset="utf-8"><h2>Статистика очищена</h2><p><a href="/stats/dashboard?token=' + encodeURIComponent(token) + '">К дашборду</a></p>');
       } catch (e) {
         console.warn('[STATS] reset failed:', e.message);
         res.writeHead(500); res.end('reset failed');
       }
     })().catch(e => { console.error('[STATS/reset]', e); res.writeHead(500); res.end('reset failed'); });
+    return;
+  }
+
+  // GET /stats/player?id=XXX&token=XXX
+  if (req.url.startsWith('/stats/player')) {
+    (async () => {
+      const urlObj = new URL(req.url, 'http://x');
+      const token = urlObj.searchParams.get('token') || '';
+      const playerId = urlObj.searchParams.get('id') || '';
+      if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+      if (!playerId) { res.writeHead(400); res.end('player id required'); return; }
+      let events;
+      if (pgPool) {
+        const result = await pgPool.query('SELECT payload FROM events WHERE player_id = $1 ORDER BY t DESC LIMIT 100', [playerId]);
+        events = result.rows.map(row => row.payload);
+      } else {
+        let lines = [];
+        try { lines = fs.readFileSync(STATS_FILE, 'utf8').split(String.fromCharCode(10)).filter(Boolean); } catch { lines = []; }
+        events = [];
+        for (const line of lines) {
+          try { const event = JSON.parse(line); if (String(event.playerId || '') === playerId) events.push(event); } catch {}
+        }
+        events.sort((a, b) => (Number(b.t) || 0) - (Number(a.t) || 0));
+        events = events.slice(0, 100);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(events));
+    })().catch(e => { console.error('[STATS/player]', e); res.writeHead(500); res.end('error'); });
     return;
   }
 
@@ -808,7 +837,8 @@ async function buildStatsSummary(appFilter) {
     onlinePeak24h: peak,
     historyOnline,
     recentLog: logEvents,
-    topPlayers
+    topPlayers,
+    serverTime: Math.floor(Date.now() / 1000)
   };
 }
 
@@ -861,6 +891,11 @@ tr:last-child td{border-bottom:none}
 .top-players-scroll th,.top-players-scroll td{padding:3px 6px}
 .expand-btn{float:right;font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
 .expand-btn:hover{background:#e2e8f0}
+.player-history-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px}
+.player-history-dialog{width:min(720px,100%);max-height:85vh;background:#fff;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.player-history-dialog h2{font-size:16px;margin:0}
+.player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px}
+.player-history-exit{color:#dc2626;font-weight:700}
 #topPlayersPanel.expanded{
   position:fixed;inset:0;z-index:1000;padding:20px;overflow-y:auto;border-radius:0;
   background:#f8fafc;border:none;
@@ -873,6 +908,7 @@ tr:last-child td{border-bottom:none}
 <h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
 <p id="updated" style="color:#64748b;font-size:11px;margin:0 0 6px"></p>
 
+<div style="display:flex;gap:10px;margin-bottom:10px;"><button onclick="copyJson()" class="expand-btn" style="float:none;">Скопировать JSON</button><button onclick="confirmReset()" class="expand-btn" style="float:none;color:#ef4444;border-color:#fca5a5;">Стереть статистику</button></div>
 <div class="cards" id="cards"></div>
 
 <div class="panels">
@@ -898,6 +934,7 @@ tr:last-child td{border-bottom:none}
 <script>
 const TOKEN = ${JSON.stringify(token)};
 const APP = ${JSON.stringify(safeApp)};
+let _lastData = null;
 const SCREEN_NAMES = {
   'welcome':'Приветствие','story':'Сюжет','menu':'Меню','levels':'Выбор ур.',
   'game':'Игра','pause':'Пауза','end':'Конец ур.','shop':'Магазин',
@@ -914,6 +951,7 @@ async function refresh(){
     const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN)+'&app='+encodeURIComponent(APP));
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
+    _lastData=d;
     document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
     renderCards(d);renderCharts(d);renderTables(d);renderLog(d);renderTopPlayers(d);updateTitleBadge(d.onlineNowCount||0);
   }catch(e){console.warn('refresh fail',e);}
@@ -921,6 +959,29 @@ async function refresh(){
 refresh();
 setInterval(refresh,30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+async function showPlayerHistory(id){
+  let events;
+  try{const response=await fetch('/stats/player?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(TOKEN));if(!response.ok)throw new Error('HTTP '+response.status);events=await response.json();}
+  catch(error){alert('Не удалось загрузить историю игрока: '+error);return;}
+  const overlay=document.createElement('div');overlay.className='player-history-overlay';
+  const dialog=document.createElement('div');dialog.className='player-history-dialog';
+  const title=document.createElement('h2');title.textContent='История игрока: '+id;
+  const list=document.createElement('div');list.className='player-history-events';
+  if(!Array.isArray(events)||events.length===0)list.textContent='Событий нет';
+  else events.forEach(function(event){
+    const name=event.ev||event.event||event.name||'unknown';
+    const t=Number(event.t)||0;const time=t?new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'--:--:--';
+    const details=[];if(event.level!=null)details.push('ур. '+event.level);if(event.mode)details.push(String(event.mode));
+    const line=document.createElement('div');line.textContent='['+time+'] '+name+(details.length?' ('+details.join('/')+')':'');
+    if(name==='session_end'||name==='app_close'){line.className='player-history-exit';line.textContent+=' — ВЫХОД';}list.appendChild(line);
+  });
+  const close=document.createElement('button');close.className='expand-btn';close.style.float='none';close.textContent='Закрыть';close.addEventListener('click',function(){overlay.remove();});
+  dialog.appendChild(title);dialog.appendChild(list);dialog.appendChild(close);overlay.appendChild(dialog);document.body.appendChild(overlay);
+}
+document.addEventListener('click',function(event){const link=event.target.closest('a[data-player-id]');if(!link)return;event.preventDefault();showPlayerHistory(link.dataset.playerId);});
+function copyJson(){if(!_lastData)return;navigator.clipboard.writeText(JSON.stringify(_lastData,null,2)).then(function(){alert('JSON скопирован в буфер обмена!');}).catch(function(error){alert('Ошибка копирования: '+error);});}
+function confirmReset(){if(confirm('Вы уверены, что хотите ПОЛНОСТЬЮ стереть статистику? Это действие необратимо.')){fetch('/stats/reset?token='+encodeURIComponent(TOKEN)).then(function(response){return response.text();}).then(function(){alert('Статистика очищена!');location.reload();}).catch(function(){alert('Ошибка при очистке');});}}
+
 function renderCards(d){
   const c = document.getElementById('cards');
   const items = [
@@ -970,7 +1031,7 @@ function renderTables(d){
     t3.innerHTML = '<tr><td style="color:#64748b">Никого — все ушли</td></tr>';
   } else {
     t3.innerHTML = '<tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
-      + rows.map(r=>'<tr><td>'+esc(r.playerId)+'</td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
+      + rows.map(r=>'<tr><td><a href="#" data-player-id="'+esc(r.playerId)+'" style="color:#6366f1;text-decoration:underline">'+esc(r.playerId)+'</a></td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
   }
 }
 function escHtml(s){
@@ -989,7 +1050,7 @@ function renderTopPlayers(d){
   }
   box.innerHTML = '<table><tr><th style="width:40px">#</th><th>Игрок</th><th style="width:90px">Заходов</th></tr>'
     + rows.map((r,i) =>
-        '<tr><td>'+(i+1)+'</td><td>'+escHtml(r.playerId)+'</td><td><b>'+r.count+'</b></td></tr>'
+        '<tr><td>'+(i+1)+'</td><td><a href="#" data-player-id="'+escHtml(r.playerId)+'" style="color:#6366f1;text-decoration:underline">'+escHtml(r.playerId)+'</a></td><td><b>'+r.count+'</b></td></tr>'
       ).join('') + '</table>';
 }
 
@@ -1010,7 +1071,7 @@ function renderLog(d){
     box.innerHTML = '<div class="log-line"><span class="log-text" style="color:#64748b">Пока пусто</span></div>';
     return;
   }
-  const now = Math.floor(Date.now()/1000);
+  const now = d.serverTime || Math.floor(Date.now()/1000);
   function esc(s){
     return String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -1053,7 +1114,7 @@ function renderLog(d){
     '</div>'
   ).join('');
 }
-load();
+refresh();
 </script>
 </body></html>`;
 }
@@ -1066,6 +1127,6 @@ initStatsTable().then(() => {
 }).catch(e => {
   console.error('[BOOT] init failed:', e);
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('\u2694 Duel server on port ' + PORT + ' (\u0431\u0435\u0437 \u0411\u0414)');
+    console.log('\u2694 Duel server on port ' + PORT + ' (без БД)');
   });
 });
