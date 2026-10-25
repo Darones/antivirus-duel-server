@@ -115,8 +115,6 @@ const VK_SHOP_ITEMS_BY_APP = {
 // [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
 
-// [PAYMENTS] Проверка подписи MD5 (по доке VK)
-// [PAYMENTS] Проверка подписи ОК: MD5(MD5(access_token+secret) + params)
 function validateOKSig(params, secretOverride) {
   const secret = secretOverride || OK_APP_SECRET;
   if (!secret) return true;
@@ -276,10 +274,10 @@ const server = http.createServer((req, res) => {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
       const token = urlObj.searchParams.get('token') || '';
-      const appFilter = urlObj.searchParams.get('app') || 'antivirus';
       if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      const summary = await buildStatsSummary(appFilter);
+      // Возвращаем сводку сразу для всех игр (antivirus и match3)
+      const summary = await buildStatsSummary();
       res.end(JSON.stringify(summary));
     })().catch(e => { console.error('[STATS/data]', e); res.writeHead(500); res.end('error'); });
     return;
@@ -289,10 +287,9 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/stats/dashboard')) {
     const urlObj = new URL(req.url, 'http://x');
     const token = urlObj.searchParams.get('token') || '';
-    const appFilter = urlObj.searchParams.get('app') || 'antivirus';
     if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(renderStatsDashboard(token, appFilter));
+    res.end(renderStatsDashboard(token));
     return;
   }
   if (req.url === '/health') {
@@ -305,7 +302,6 @@ const server = http.createServer((req, res) => {
     const urlObj = new URL(req.url, 'http://x');
     const params = Object.fromEntries(urlObj.searchParams);
     console.log('[OK-PAY-RAW]', JSON.stringify(params));
-    console.log('[OK-PAY-RAW-KEYS]', Object.keys(params).sort().join(','));
     const rawAppId = String(params.app_id || urlObj.searchParams.get('app') || '');
     const appParam = rawAppId || '512004990432';
     const isTanks = (appParam === '54786750') || (appParam === '512005381577');
@@ -318,20 +314,13 @@ const server = http.createServer((req, res) => {
     const okSecret = isTanks ? OK_APP_SECRET_TANKS : OK_APP_SECRET;
 
     let notificationType = params.notification_type || params.operation_type || '';
-    // Если OK присылает подтверждение без notification_type,
-    // но с product_code — считаем это order_status_change
     if (!notificationType && (params.product_code || params.code || params.item_id) && (params.status || params.amount || params.method === 'callbacks.payment')) {
       notificationType = 'order_status_change';
-      console.log('[OK-PAY] inferred order_status_change from params');
     }
-    console.log('[OK-PAY] type=', notificationType, 'status=', params.status, 'product=', params.product_code);
     const itemId = params.product_code || params.item || params.code;
     const userId = params.uid || params.user_id;
     const orderId = params.order_id || params.transaction_id;
 
-    console.log('[OK-PAY]', 'app=', appParam, 'type=', notificationType, 'item=', itemId, 'user=', userId);
-
-    // Для OK пока пропускаем проверку подписи (отладим отдельно)
     if (isOKRequest) {
       console.log('[OK-PAY] OK request — sig check skipped');
     } else if (okSecret) {
@@ -349,35 +338,21 @@ const server = http.createServer((req, res) => {
       }
     }
 
-    // get_item — запрос информации о товаре
     if (notificationType === 'get_item' || notificationType === 'get_item_test') {
       const item = shop[itemId];
       if (!item) {
-        console.warn('[OK-PAY] unknown item', itemId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { error_code: 20, error_msg: 'Unknown item', critical: true } }));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        response: {
-          title: item.title,
-          price: item.price,
-          photo_url: item.photo_url || '',
-          item_id: itemId
-        }
-      }));
+      res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: item.photo_url || '', item_id: itemId } }));
       return;
     }
 
-    // order_status_change — подтверждение покупки
     if (notificationType === 'order_status_change' || notificationType === 'order_status_change_test') {
-      // OK НЕ присылает status. Считаем покупку подтверждённой, если
-      // пришёл product_code и (transaction_id или amount).
-      // VK присылает status=chargeable — оставляем как условие.
       const isOKPayment = (params.method === 'callbacks.payment') || (params.application_key === 'CBOGCBOGDIHBABABA') || !params.status;
       const isChargeable = (params.status === 'chargeable') || (isOKPayment && (params.product_code || params.item_id || params.item));
-      console.log('[OK-PAY-ORDER] isOKPayment=', isOKPayment, 'isChargeable=', isChargeable, 'status=', params.status, 'product_code=', params.product_code);
       if (isChargeable) {
         const resolvedItemId = params.product_code || params.item_id || params.item || itemId;
         const item = shop[resolvedItemId];
@@ -385,9 +360,6 @@ const server = http.createServer((req, res) => {
           const set = purchases.get(userId) || new Set();
           set.add(resolvedItemId);
           purchases.set(userId, set);
-          console.log('[OK-PAY] granted', resolvedItemId, 'to', userId);
-        } else {
-          console.warn('[OK-PAY] item not found in shop:', resolvedItemId);
         }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -395,10 +367,8 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // Фолбэк — простое уведомление
     const code = params.product_code || params.code;
     if (!code) {
-      console.warn('[OK-PAY] no product_code — responding ok for compatibility');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{"status":"ok"}');
       return;
@@ -424,30 +394,20 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const params = Object.fromEntries(new URLSearchParams(body));
-        console.log('[RAW] FULL PARAMS:', JSON.stringify(params));
-        console.log('[RAW] keys:', Object.keys(params).sort().join(','));
         const appId = String(params.app_id || '');
         const isOK = (params.site === 'OK') || (appId === '512004990432') || (appId === '512005381577');
-        console.log('[PAY]', params.notification_type, 'item=', params.item, 'user=', params.user_id, 'site=', params.site || 'VK', 'isOK=', isOK);
         if (!isOK) {
-          // Проверка подписи VK (только для VK-запросов)
           if (!validatePaymentsSig(params)) {
-            console.warn('[PAY] invalid sig');
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { error_code: 10, error_msg: 'invalid signature', critical: true } }));
             return;
           }
-        } else {
-          // Для OK пока пропускаем проверку подписи (отладим отдельно)
-          console.log('[PAY-OK] sig check skipped for OK');
         }
         const type = params.notification_type || '';
         const itemId = params.item;
         const userId = params.user_id;
         const shopItems = VK_SHOP_ITEMS_BY_APP[params.app_id];
-        console.log('[PAY] shop lookup app_id=', params.app_id, 'found=', !!shopItems);
         if (!shopItems) {
-          console.warn('[PAY] unknown app_id', params.app_id);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown app_id', critical: true } } }));
           return;
@@ -457,20 +417,17 @@ const server = http.createServer((req, res) => {
           const item = shopItems[itemId];
           if (!item) { res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 20, error_msg: 'Unknown item', critical: true } } })); return; }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          if (!item.photo_url) console.warn('[GET_ITEM] empty photo_url for', itemId);
           res.end(JSON.stringify({ response: { title: item.title, price: item.price, photo_url: item.photo_url || '', item_id: itemId } }));
           return;
         }
 
-        if (type === 'order_status_change'
-            || type === 'order_status_change_test') {
+        if (type === 'order_status_change' || type === 'order_status_change_test') {
           if (params.status === 'chargeable') {
             const item = shopItems[itemId];
             if (item) {
               const set = purchases.get(userId) || new Set();
               set.add(itemId);
               purchases.set(userId, set);
-              console.log('[PAY] granted', itemId, 'to', userId);
             }
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -499,14 +456,13 @@ wss.on('connection', (ws, req) => {
   ws.playerId = vkParams.vk_user_id || 'anon_' + Math.random().toString(36).slice(2, 8);
   ws.isAlive = true;
   players.set(ws, { playerId: ws.playerId, roomId: null });
-  console.log(`[+] ${ws.playerId}`);
   send(ws, { type: 'welcome', playerId: ws.playerId });
 
   ws.on('message', raw => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
     handleMessage(ws, msg);
   });
-  ws.on('close', () => { console.log(`[-] ${ws.playerId}`); handleLeave(ws); players.delete(ws); });
+  ws.on('close', () => { handleLeave(ws); players.delete(ws); });
   ws.on('pong', () => { ws.isAlive = true; });
 });
 
@@ -643,16 +599,11 @@ setInterval(() => {
   }
 }, 5000);
 
-async function buildStatsSummary(appFilter) {
-  const filter = appFilter || 'antivirus';
+async function buildStatsSummary() {
   let events = [];
   if (pgPool) {
     try {
-      const query = filter === 'all'
-        ? 'SELECT payload FROM events ORDER BY t ASC'
-        : 'SELECT payload FROM events WHERE app = $1 ORDER BY t ASC';
-      const params = filter === 'all' ? [] : [filter];
-      const { rows } = await pgPool.query(query, params);
+      const { rows } = await pgPool.query('SELECT payload FROM events ORDER BY t ASC');
       events = rows.map(r => r.payload).filter(e => !isIgnoredPlayer(e.playerId));
     } catch (e) { console.warn('[STATS] DB read failed:', e.message); events = []; }
   } else {
@@ -661,13 +612,29 @@ async function buildStatsSummary(appFilter) {
     for (const line of lines) {
       try {
         const e = JSON.parse(line);
-        const eApp = e.app || 'antivirus';
-        if (filter !== 'all' && eApp !== filter) continue;
         if (isIgnoredPlayer(e.playerId)) continue;
         events.push(e);
       } catch {}
     }
   }
+
+  const apps = { antivirus: [], match3: [], combined: events };
+
+  for (const e of events) {
+    const a = e.app || 'antivirus';
+    if (apps[a]) apps[a].push(e);
+  }
+
+  const result = {
+    combined: processEvents(apps.combined, 30),
+    antivirus: processEvents(apps.antivirus, 30),
+    match3: processEvents(apps.match3, 100),
+    serverTime: Math.floor(Date.now() / 1000)
+  };
+  return result;
+}
+
+function processEvents(events, maxLevels) {
   const byDay = {};
   const players = new Set();
   const eventCounts = {};
@@ -677,6 +644,7 @@ async function buildStatsSummary(appFilter) {
   const lastScreen = {};
   const screens = {};
   let purchases = 0, adWatched = 0, adFailed = 0;
+  let adRewarded = 0, adInterstitial = 0;
   const sessionsByPlayer = {};
   const lastSeen = {};
   const sessions = [];
@@ -704,7 +672,16 @@ async function buildStatsSummary(appFilter) {
     if (e.ev === 'screen' && e.screen) screens[e.screen] = (screens[e.screen]||0)+1;
     if (e.ev === 'app_close' && e.screen) lastScreen[e.screen] = (lastScreen[e.screen]||0)+1;
     if (e.ev === 'purchase') purchases++;
-    if (e.ev === 'ad_watch') { if (e.ok) adWatched++; else adFailed++; }
+    
+    if (e.ev === 'ad_watch') { 
+      if (e.ok) {
+        adWatched++;
+        if (e.kind === 'rewarded') adRewarded++;
+        else if (e.kind === 'interstitial') adInterstitial++;
+      } else {
+        adFailed++;
+      }
+    }
 
     const sessionKey = e.sessionId ? String(e.sessionId) : (e.playerId ? 'p_' + e.playerId : null);
     if (e.ev === 'session_start' && sessionKey) {
@@ -778,7 +755,7 @@ async function buildStatsSummary(appFilter) {
   for (const time of timelineKeys) { cur+=timeline[time]; if(cur>peak)peak=cur; }
 
   const funnel = [];
-  for (let i = 1; i <= 30; i++) {
+  for (let i = 1; i <= maxLevels; i++) {
     funnel.push({
       level: i,
       started: levelStart[i] || 0,
@@ -787,7 +764,6 @@ async function buildStatsSummary(appFilter) {
     });
   }
 
-  // Живой лог — последние 150 событий с русскими описаниями
   const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','purchase','ad_watch','share','level_abandon']);
   const logEvents = events
     .filter(e => LOG_EVENTS.has(e.ev))
@@ -808,7 +784,6 @@ async function buildStatsSummary(appFilter) {
       ok: e.ok === true ? true : (e.ok === false ? false : null)
     }));
 
-  // Топ игроков по количеству заходов (session_start)
   const playerSessions = new Map();
   for(const e of events){
     if(e.ev === 'session_start' && e.playerId){
@@ -827,6 +802,8 @@ async function buildStatsSummary(appFilter) {
     purchases,
     adWatched,
     adFailed,
+    adRewarded,
+    adInterstitial,
     days,
     eventCounts,
     funnel,
@@ -837,20 +814,21 @@ async function buildStatsSummary(appFilter) {
     onlinePeak24h: peak,
     historyOnline,
     recentLog: logEvents,
-    topPlayers,
-    serverTime: Math.floor(Date.now() / 1000)
+    topPlayers
   };
 }
 
-function renderStatsDashboard(token, appFilter) {
-  const safeApp = (appFilter || 'antivirus').replace(/[^a-z0-9_-]/gi, '');
+function renderStatsDashboard(token) {
   return `<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><title>Антивирус — Статистика</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:10px;overflow:hidden}
 h1{margin:0 0 4px;font-size:18px}
-h2{font-size:13px;margin:0 0 4px;color:#334155;font-weight:700}
+h2{font-size:13px;margin:0 0 4px;color:#334155;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab-btn{padding:6px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;font-weight:600;color:#475569}
+.tab-btn.active{background:#6366f1;color:#fff;border-color:#6366f1}
 .cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:6px 0 10px}
 .card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;text-align:center}
 .card b{display:block;font-size:20px;color:#6366f1;line-height:1.1}
@@ -859,128 +837,121 @@ h2{font-size:13px;margin:0 0 4px;color:#334155;font-weight:700}
 .card.card-online small{color:#d1fae5}
 .card small{color:#64748b;font-size:10px}
 .panels{display:grid;grid-template-columns:minmax(240px,1fr) 1.6fr;gap:10px;align-items:start}
-.panel{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px;transition:all 0.2s}
+.panel.fullscreen{position:fixed;inset:10px;z-index:1000;overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:11px}
 th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #e2e8f0}
-th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
+th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569;position:sticky;top:0}
 tr:last-child td{border-bottom:none}
-.tbl-scroll{max-height:440px;overflow-y:auto}
-.funnel-wrap{position:relative;height:320px}
-.log-scroll{
-  max-height:260px;
-  overflow-y:auto;
-  font-family:'SF Mono','Consolas',monospace;
-  font-size:11.5px;
-  line-height:1.5;
-  background:#0f172a;
-  color:#e2e8f0;
-  border-radius:6px;
-  padding:6px 10px;
-}
+.tbl-scroll{max-height:200px;overflow-y:auto}
+.funnel-wrap{position:relative;height:320px;width:100%}
+.panel.fullscreen .funnel-wrap{height:calc(100vh - 100px)}
+.log-scroll{max-height:260px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11.5px;line-height:1.5;background:#0f172a;color:#e2e8f0;border-radius:6px;padding:6px 10px}
+.panel.fullscreen .log-scroll{max-height:calc(100vh - 100px)}
 .log-line{display:flex;gap:8px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .log-line:last-child{border-bottom:none}
 .log-time{color:#64748b;flex-shrink:0;min-width:52px}
 .log-player{color:#94a3b8;flex-shrink:0;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-text{color:#e2e8f0;flex:1}
-.log-text.good{color:#86efac}
-.log-text.bad{color:#fca5a5}
-.log-text.warn{color:#fcd34d}
-.log-text.pay{color:#c4b5fd}
-.top-players-scroll{max-height:200px;overflow-y:auto;font-size:11px}
-.top-players-scroll table{margin:0}
-.top-players-scroll th,.top-players-scroll td{padding:3px 6px}
-.expand-btn{float:right;font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
+.log-text.good{color:#86efac}.log-text.bad{color:#fca5a5}.log-text.warn{color:#fcd34d}.log-text.pay{color:#c4b5fd}
+.expand-btn{font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
 .expand-btn:hover{background:#e2e8f0}
 .player-history-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px}
 .player-history-dialog{width:min(720px,100%);max-height:85vh;background:#fff;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
 .player-history-dialog h2{font-size:16px;margin:0}
 .player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px}
 .player-history-exit{color:#dc2626;font-weight:700}
-#topPlayersPanel.expanded{
-  position:fixed;inset:0;z-index:1000;padding:20px;overflow-y:auto;border-radius:0;
-  background:#f8fafc;border:none;
-}
-#topPlayersPanel.expanded .top-players-scroll{max-height:none}
-#topPlayersPanel.expanded h2{font-size:16px}
-#topPlayersPanel.expanded .top-players-scroll td{font-size:13px;padding:5px 10px}
 @media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
 </style></head><body>
-<h1 id="pageTitle">${appFilter === 'tanks' ? 'Танки' : 'Антивирус'} — статистика</h1>
-<p id="updated" style="color:#64748b;font-size:11px;margin:0 0 6px"></p>
 
-<div style="display:flex;gap:10px;margin-bottom:10px;"><button onclick="copyJson()" class="expand-btn" style="float:none;">Скопировать JSON</button><button onclick="confirmReset()" class="expand-btn" style="float:none;color:#ef4444;border-color:#fca5a5;">Стереть статистику</button></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+  <h1 id="pageTitle">Антивирус — Статистика</h1>
+  <div style="display:flex;gap:10px;">
+    <button onclick="copyJson()" class="expand-btn" style="color:#334155;">📋 Скопировать JSON</button>
+    <button onclick="confirmReset()" class="expand-btn" style="color:#ef4444;border-color:#fca5a5;">🗑 Стереть</button>
+  </div>
+</div>
+<p id="updated" style="color:#64748b;font-size:11px;margin:0 0 10px"></p>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('combined')">Общая статистика</button>
+  <button class="tab-btn" onclick="switchTab('antivirus')">Антивирус (Dr. Mario)</button>
+  <button class="tab-btn" onclick="switchTab('match3')">Три в ряд (Match-3)</button>
+</div>
+
 <div class="cards" id="cards"></div>
 
 <div class="panels">
   <div class="panel">
-    <h2>Активные сейчас</h2>
+    <h2>Активные сейчас <span id="onlineCount" style="font-size:11px;color:#64748b"></span></h2>
     <div class="tbl-scroll" style="max-height:150px"><table id="tblOnline"></table></div>
   </div>
-  <div class="panel" style="grid-row:span 2">
-    <h2>Воронка по уровням (начали / прошли / проиграли)</h2>
+  
+  <div class="panel" id="funnelPanel" style="grid-row:span 2">
+    <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶ Развернуть</button></h2>
     <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
   </div>
+
   <div class="panel">
-    <h2>Живой лог (последние события)</h2>
-    <div class="log-scroll" style="max-height:200px" id="logBox"></div>
+    <h2>Реклама <span id="adSummary" style="font-size:11px;color:#64748b"></span></h2>
+    <table id="tblAds"></table>
   </div>
-  <div class="panel" id="topPlayersPanel">
-    <h2>Топ игроков по заходам
-      <button id="topPlayersExpand" class="expand-btn" onclick="toggleTopPlayers()">⛶ Развернуть</button>
-    </h2>
-    <div class="top-players-scroll" style="max-height:170px" id="topPlayersBox"></div>
+
+  <div class="panel" id="logPanel" style="grid-column:1/-1">
+    <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶ Развернуть</button></h2>
+    <div class="log-scroll" id="logBox"></div>
+  </div>
+
+  <div class="panel" id="topPlayersPanel" style="grid-column:1/-1">
+    <h2>Топ игроков по заходам <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶ Развернуть</button></h2>
+    <div class="tbl-scroll" style="max-height:200px" id="topPlayersBox"></div>
   </div>
 </div>
+
 <script>
 const TOKEN = ${JSON.stringify(token)};
-const APP = ${JSON.stringify(safeApp)};
 let _lastData = null;
+let currentTab = 'combined';
 const SCREEN_NAMES = {
   'welcome':'Приветствие','story':'Сюжет','menu':'Меню','levels':'Выбор ур.',
   'game':'Игра','pause':'Пауза','end':'Конец ур.','shop':'Магазин',
   'daily':'Бонус','settings':'Настройки','records':'Рекорды','duel':'Дуэль',
-  'duel-share':'Дуэль: пригл.','duel-waiting':'Дуэль: ожид.',
-  'duel-countdown':'Дуэль: отсчёт','boot':'Загрузка','characters-test':'Тест'
+  'boot':'Загрузка'
 };
 function ruScreen(key){ return key ? (SCREEN_NAMES[key] || key) : '—'; }
-function updateTitleBadge(online){
-  document.title=online>0?' '+online+' онлайн — Антивирус':'Антивирус — Статистика';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  if(_lastData) renderAll();
 }
+
 async function refresh(){
   try{
-    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN)+'&app='+encodeURIComponent(APP));
+    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN));
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
     _lastData=d;
-    document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString()+' · событий: '+d.totalEvents;
-    renderCards(d);renderCharts(d);renderTables(d);renderLog(d);renderTopPlayers(d);updateTitleBadge(d.onlineNowCount||0);
+    document.getElementById('updated').textContent='Обновлено: '+new Date().toLocaleString();
+    renderAll();
   }catch(e){console.warn('refresh fail',e);}
 }
 refresh();
 setInterval(refresh,30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
-async function showPlayerHistory(id){
-  let events;
-  try{const response=await fetch('/stats/player?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(TOKEN));if(!response.ok)throw new Error('HTTP '+response.status);events=await response.json();}
-  catch(error){alert('Не удалось загрузить историю игрока: '+error);return;}
-  const overlay=document.createElement('div');overlay.className='player-history-overlay';
-  const dialog=document.createElement('div');dialog.className='player-history-dialog';
-  const title=document.createElement('h2');title.textContent='История игрока: '+id;
-  const list=document.createElement('div');list.className='player-history-events';
-  if(!Array.isArray(events)||events.length===0)list.textContent='Событий нет';
-  else events.forEach(function(event){
-    const name=event.ev||event.event||event.name||'unknown';
-    const t=Number(event.t)||0;const time=t?new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'--:--:--';
-    const details=[];if(event.level!=null)details.push('ур. '+event.level);if(event.mode)details.push(String(event.mode));
-    const line=document.createElement('div');line.textContent='['+time+'] '+name+(details.length?' ('+details.join('/')+')':'');
-    if(name==='session_end'||name==='app_close'){line.className='player-history-exit';line.textContent+=' — ВЫХОД';}list.appendChild(line);
-  });
-  const close=document.createElement('button');close.className='expand-btn';close.style.float='none';close.textContent='Закрыть';close.addEventListener('click',function(){overlay.remove();});
-  dialog.appendChild(title);dialog.appendChild(list);dialog.appendChild(close);overlay.appendChild(dialog);document.body.appendChild(overlay);
+
+function renderAll() {
+  const d = _lastData[currentTab];
+  document.getElementById('pageTitle').textContent = 
+    currentTab === 'combined' ? 'Общая статистика' : 
+    currentTab === 'antivirus' ? 'Антивирус (Dr. Mario)' : 'Три в ряд (Match-3)';
+  renderCards(d);
+  renderCharts(d);
+  renderTables(d);
+  renderLog(d);
+  renderTopPlayers(d);
 }
-document.addEventListener('click',function(event){const link=event.target.closest('a[data-player-id]');if(!link)return;event.preventDefault();showPlayerHistory(link.dataset.playerId);});
-function copyJson(){if(!_lastData)return;navigator.clipboard.writeText(JSON.stringify(_lastData,null,2)).then(function(){alert('JSON скопирован в буфер обмена!');}).catch(function(error){alert('Ошибка копирования: '+error);});}
-function confirmReset(){if(confirm('Вы уверены, что хотите ПОЛНОСТЬЮ стереть статистику? Это действие необратимо.')){fetch('/stats/reset?token='+encodeURIComponent(TOKEN)).then(function(response){return response.text();}).then(function(){alert('Статистика очищена!');location.reload();}).catch(function(){alert('Ошибка при очистке');});}}
 
 function renderCards(d){
   const c = document.getElementById('cards');
@@ -991,40 +962,60 @@ function renderCards(d){
     ['Событий',    d.totalEvents,    false],
     ['Ср. сессия', d.avgSessionSec ? Math.round(d.avgSessionSec/60) + ' мин' : '—', false],
     ['Покупок',    d.purchases,      false],
-    ['Реклама ОК', d.adWatched,      false],
+    ['Всего реклам', d.adWatched,    false],
     ['Реклама ✗',  d.adFailed,       false]
   ];
   c.innerHTML = items.map(([t,v,hl]) =>
     '<div class="card'+(hl?' card-online':'')+'"><b>'+v+'</b><small>'+t+'</small></div>'
   ).join('');
+
+  // Реклама
+  const ads = document.getElementById('tblAds');
+  const rewarded = d.adRewarded || 0;
+  const inter = d.adInterstitial || 0;
+  const total = rewarded + inter;
+  document.getElementById('adSummary').textContent = 'Всего: ' + total;
+  ads.innerHTML = `
+    <tr><th>Тип</th><th>Показов</th><th>Доля</th></tr>
+    <tr><td>Rewarded (за награду)</td><td>${rewarded}</td><td>${total ? Math.round(rewarded/total*100) : 0}%</td></tr>
+    <tr><td>Interstitial (между)</td><td>${inter}</td><td>${total ? Math.round(inter/total*100) : 0}%</td></tr>
+    <tr><td style="color:#ef4444">Ошибки/пропуски</td><td>${d.adFailed}</td><td>—</td></tr>
+  `;
 }
+
 let charts = {};
 function renderCharts(d){
   if(charts.funnel) charts.funnel.destroy();
   const cv = document.getElementById('chFunnel');
   if(!cv) return;
+  
+  const labels = d.funnel.map(x=>'Ур.'+x.level);
+  const startedData = d.funnel.map(x=>x.started);
+  const wonData = d.funnel.map(x=>x.won);
+  const lostData = d.funnel.map(x=>x.lost);
+
   charts.funnel = new Chart(cv, {
     type:'bar',
-    data:{ labels:d.funnel.map(x=>'Ур.'+x.level), datasets:[
-      { label:'Начали',    data:d.funnel.map(x=>x.started), backgroundColor:'#94a3b8' },
-      { label:'Прошли',    data:d.funnel.map(x=>x.won),     backgroundColor:'#10b981' },
-      { label:'Проиграли', data:d.funnel.map(x=>x.lost),    backgroundColor:'#ef4444' }
+    data:{ labels: labels, datasets:[
+      { label:'Начали',    data: startedData, backgroundColor:'#94a3b8' },
+      { label:'Прошли',    data: wonData,     backgroundColor:'#10b981' },
+      { label:'Проиграли', data: lostData,    backgroundColor:'#ef4444' }
     ]},
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{labels:{boxWidth:8,font:{size:9}}} },
-      scales:{ x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}},
-               y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} }
+      scales:{ 
+        x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}}, 
+        y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} 
+      }
     }
   });
 }
+
 function renderTables(d){
-  function esc(s){
-    return String(s == null ? '' : s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  }
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   const t3 = document.getElementById('tblOnline');
+  document.getElementById('onlineCount').textContent = d.onlineNowCount + ' чел.';
   if(!t3) return;
   const rows = (d.onlineNow || []).slice().sort((a,b)=>a.ageSec-b.ageSec);
   if(rows.length === 0){
@@ -1033,11 +1024,6 @@ function renderTables(d){
     t3.innerHTML = '<tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
       + rows.map(r=>'<tr><td><a href="#" data-player-id="'+esc(r.playerId)+'" style="color:#6366f1;text-decoration:underline">'+esc(r.playerId)+'</a></td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
   }
-}
-function escHtml(s){
-  return String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function renderTopPlayers(d){
@@ -1049,18 +1035,7 @@ function renderTopPlayers(d){
     return;
   }
   box.innerHTML = '<table><tr><th style="width:40px">#</th><th>Игрок</th><th style="width:90px">Заходов</th></tr>'
-    + rows.map((r,i) =>
-        '<tr><td>'+(i+1)+'</td><td><a href="#" data-player-id="'+escHtml(r.playerId)+'" style="color:#6366f1;text-decoration:underline">'+escHtml(r.playerId)+'</a></td><td><b>'+r.count+'</b></td></tr>'
-      ).join('') + '</table>';
-}
-
-function toggleTopPlayers(){
-  const panel = document.getElementById('topPlayersPanel');
-  if(!panel) return;
-  panel.classList.toggle('expanded');
-  const btn = document.getElementById('topPlayersExpand');
-  if(btn) btn.textContent = panel.classList.contains('expanded') ? '✕ Свернуть' : '⛶ Развернуть';
-  document.body.style.overflow = panel.classList.contains('expanded') ? 'hidden' : '';
+    + rows.map((r,i) => '<tr><td>'+(i+1)+'</td><td><a href="#" data-player-id="'+String(r.playerId).replace(/"/g,'&quot;')+'" style="color:#6366f1;text-decoration:underline">'+String(r.playerId).replace(/</g,'&lt;')+'</a></td><td><b>'+r.count+'</b></td></tr>').join('') + '</table>';
 }
 
 function renderLog(d){
@@ -1071,12 +1046,8 @@ function renderLog(d){
     box.innerHTML = '<div class="log-line"><span class="log-text" style="color:#64748b">Пока пусто</span></div>';
     return;
   }
-  const now = d.serverTime || Math.floor(Date.now()/1000);
-  function esc(s){
-    return String(s == null ? '' : s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  }
+  const now = _lastData.serverTime || Math.floor(Date.now()/1000);
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtTime(t){
     const dt = now - t;
     if(dt < 60) return dt + 'с';
@@ -1089,8 +1060,7 @@ function renderLog(d){
     switch(r.ev){
       case 'session_start':  return 'вошёл в игру';
       case 'level_start':    return 'начал' + (r.mode === 'endless' ? ' бесконечную' : lvl);
-      case 'level_end':
-        return r.won ? ('прошёл' + lvl) : ('проиграл' + lvl);
+      case 'level_end':      return r.won ? ('прошёл' + lvl) : ('проиграл' + lvl);
       case 'level_abandon':  return 'вышел с' + lvl;
       case 'app_close':      return 'вышел (экран: ' + (ruScreen(r.screen) || '—') + ')';
       case 'purchase':       return 'купил: ' + (r.item || 'товар') + (r.amount ? ' (' + r.amount + ')' : '');
@@ -1106,27 +1076,56 @@ function renderLog(d){
     if(r.ev === 'app_close') return 'warn';
     return '';
   }
-  box.innerHTML = rows.map(r =>
-    '<div class="log-line">' +
-      '<span class="log-time">' + fmtTime(r.t) + '</span>' +
-      '<span class="log-player">' + esc(r.player) + '</span>' +
-      '<span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span>' +
-    '</div>'
-  ).join('');
+  box.innerHTML = rows.map(r => '<div class="log-line"><span class="log-time">' + fmtTime(r.t) + '</span><span class="log-player">' + esc(r.player) + '</span><span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span></div>').join('');
 }
-refresh();
+
+function toggleFullscreen(id) {
+  const el = document.getElementById(id);
+  if(el) el.classList.toggle('fullscreen');
+}
+
+async function showPlayerHistory(id){
+  let events;
+  try{const response=await fetch('/stats/player?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(TOKEN));if(!response.ok)throw new Error('HTTP '+response.status);events=await response.json();}
+  catch(error){alert('Не удалось загрузить историю игрока: '+error);return;}
+  const overlay=document.createElement('div');overlay.className='player-history-overlay';
+  const dialog=document.createElement('div');dialog.className='player-history-dialog';
+  const title=document.createElement('h2');title.textContent='История игрока: '+id;
+  const list=document.createElement('div');list.className='player-history-events';
+  if(!Array.isArray(events)||events.length===0)list.textContent='Событий нет';
+  else events.forEach(function(event){
+    const name=event.ev||event.event||event.name||'unknown';
+    const t=Number(event.t)||0;const time=t?new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'--:--:--';
+    const details=[];if(event.level!=null)details.push('ур. '+event.level);if(event.mode)details.push(String(event.mode));if(event.screen)details.push(ruScreen(event.screen));
+    const line=document.createElement('div');line.textContent='['+time+'] '+name+(details.length?' ('+details.join('/')+')':'');
+    if(name==='session_end'||name==='app_close'){line.className='player-history-exit';line.textContent+=' — ВЫХОД';}list.appendChild(line);
+  });
+  const close=document.createElement('button');close.className='expand-btn';close.style.float='none';close.textContent='Закрыть';close.addEventListener('click',function(){overlay.remove();});
+  dialog.appendChild(title);dialog.appendChild(list);dialog.appendChild(close);overlay.appendChild(dialog);document.body.appendChild(overlay);
+}
+
+document.addEventListener('click',function(event){
+  const link=event.target.closest('a[data-player-id]');
+  if(!link)return;
+  event.preventDefault();
+  showPlayerHistory(link.dataset.playerId);
+});
+
+function copyJson(){if(!_lastData)return;navigator.clipboard.writeText(JSON.stringify(_lastData,null,2)).then(function(){alert('JSON скопирован в буфер обмена!');}).catch(function(error){alert('Ошибка копирования: '+error);});}
+function confirmReset(){if(confirm('Вы уверены, что хотите ПОЛНОСТЬЮ стереть статистику? Это действие необратимо.')){fetch('/stats/reset?token='+encodeURIComponent(TOKEN)).then(function(response){return response.text();}).then(function(){alert('Статистика очищена!');location.reload();}).catch(function(){alert('Ошибка при очистке');});}}
 </script>
 </body></html>`;
 }
+
 initStatsTable().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('\u2694 Duel server on port ' + PORT);
+    console.log('🚀 [BOOT] Сервер запущен (Табы дашборда, 2 воронки, Реклама, Фиксы UI)');
     console.log('   Health: http://0.0.0.0:' + PORT + '/health');
     console.log('   Stats: ' + (pgPool ? 'Postgres' : 'file (no DATABASE_URL)'));
   });
 }).catch(e => {
   console.error('[BOOT] init failed:', e);
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('\u2694 Duel server on port ' + PORT + ' (без БД)');
+    console.log('🚀 [BOOT] Сервер запущен (без БД)');
   });
 });
