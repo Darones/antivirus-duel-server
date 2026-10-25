@@ -146,7 +146,7 @@ function validateVKParams(params) {
   if (!VK_APP_SECRET) return true;
   const { sign, ...rest } = params;
   if (!sign) return false;
-  const sorted = Object.keys(rest).sort().map(k => k + '=' + rest[k]).join('&');
+  const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
   const hash = crypto.createHmac('sha256', VK_APP_SECRET).update(sorted)
     .digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return hash === sign;
@@ -602,16 +602,18 @@ async function buildStatsSummary() {
     }
   }
 
-  const apps = { antivirus: [], match3: [], combined: events };
+  const apps = { antivirus: [], match3: [], tanks: [], combined: [] };
   for (const e of events) {
     const a = e.app || 'antivirus';
     if (apps[a]) apps[a].push(e);
+    apps.combined.push(e); // В общую статистику идет всё
   }
 
   return {
     combined: processEvents(apps.combined, 30),
     antivirus: processEvents(apps.antivirus, 30),
     match3: processEvents(apps.match3, 100),
+    tanks: processEvents(apps.tanks, 30),
     serverTime: Math.floor(Date.now() / 1000)
   };
 }
@@ -764,7 +766,7 @@ function renderStatsDashboard(token) {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 *{box-sizing:border-box;}
-body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;height:100vh;display:flex;flex-direction:column;gap:8px;overflow:hidden;}
+body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;min-height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
 .header{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;}
 .header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .header h1{margin:0;font-size:16px;}
@@ -780,17 +782,17 @@ body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;pa
 .card.card-online b{color:#fff;font-size:20px;}
 .card.card-online small{color:#d1fae5;}
 .card small{color:#64748b;font-size:9px;text-transform:uppercase;}
-.main-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1.5fr;gap:8px;}
-.col-left{display:flex;flex-direction:column;gap:8px;min-height:0;}
-.col-right{display:flex;flex-direction:column;gap:8px;min-height:0;}
-.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;min-height:0;}
+.main-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:8px;}
+.col-left{display:flex;flex-direction:column;gap:8px;}
+.col-right{display:flex;flex-direction:column;gap:8px;}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;}
 .panel h2{margin:0 0 6px 0;font-size:12px;display:flex;justify-content:space-between;color:#334155;}
-.tbl-wrap{flex:1;overflow-y:auto;min-height:0;}
-.log-wrap{flex:1;overflow-y:auto;min-height:0;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
-.chart-wrap{flex:1;position:relative;min-height:0;}
-.panel.bottom{grid-column:span 2;flex:0 0 80px;flex-direction:row;align-items:center;justify-content:space-between;}
+.tbl-wrap{height:250px;overflow-y:auto;}
+.log-wrap{height:300px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
+.chart-wrap{height:250px;position:relative;}
+.panel.bottom{grid-column:span 2;flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;}
 .panel.bottom h2{margin:0;white-space:nowrap;}
-.ads-wrap{display:flex;gap:15px;font-size:12px;font-weight:600;}
+.ads-wrap{display:flex;gap:30px;font-size:14px;font-weight:600;}
 table{width:100%;border-collapse:collapse;font-size:11px;}
 th,td{padding:2px 6px;text-align:left;border-bottom:1px solid #e2e8f0;}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;color:#475569;position:sticky;top:0;z-index:1;}
@@ -802,9 +804,9 @@ tr:last-child td{border-bottom:none;}
 .log-text.good{color:#86efac;}.log-text.bad{color:#fca5a5;}.log-text.warn{color:#fcd34d;}.log-text.pay{color:#c4b5fd;}
 .expand-btn{font-size:10px;padding:1px 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155;}
 .expand-btn:hover{background:#e2e8f0;}
-.panel.expanded{position:fixed;inset:10px;z-index:1000;padding:16px;box-shadow:0 0 0 100vmax rgba(0,0,0,.5);}
+.panel.expanded{position:fixed;inset:10px;z-index:1000;padding:16px;box-shadow:0 0 0 100vmax rgba(0,0,0,.5);height:auto;}
 .panel.expanded .chart-wrap{height:calc(100vh - 80px);}
-.panel.expanded .log-wrap, .panel.expanded .tbl-wrap{max-height:calc(100vh - 80px);}
+.panel.expanded .log-wrap, .panel.expanded .tbl-wrap{height:calc(100vh - 80px);}
 .player-history-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px;}
 .player-history-dialog{width:min(720px,100%);max-height:85vh;background:#fff;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;}
 .player-history-dialog h2{font-size:16px;margin:0;}
@@ -821,6 +823,7 @@ tr:last-child td{border-bottom:none;}
       <button class="tab-btn active" onclick="switchTab('combined', this)">Общая</button>
       <button class="tab-btn" onclick="switchTab('antivirus', this)">Антивирус</button>
       <button class="tab-btn" onclick="switchTab('match3', this)">Match-3</button>
+      <button class="tab-btn" onclick="switchTab('tanks', this)">Танки</button>
     </div>
   </div>
   <div class="actions">
@@ -833,22 +836,22 @@ tr:last-child td{border-bottom:none;}
 
 <div class="main-grid">
   <div class="col-left">
-    <div class="panel" style="flex:1;">
+    <div class="panel">
       <h2>Активные сейчас <span id="onlineCount" style="font-size:10px;color:#64748b"></span></h2>
       <div class="tbl-wrap"><table id="tblOnline"></table></div>
     </div>
-    <div class="panel" id="logPanel" style="flex:1;">
+    <div class="panel" id="logPanel">
       <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶</button></h2>
       <div class="log-wrap" id="logBox"></div>
     </div>
   </div>
   
   <div class="col-right">
-    <div class="panel" id="funnelPanel" style="flex:0 0 250px;">
+    <div class="panel" id="funnelPanel">
       <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
       <div class="chart-wrap"><canvas id="chFunnel"></canvas></div>
     </div>
-    <div class="panel" id="topPlayersPanel" style="flex:1;">
+    <div class="panel" id="topPlayersPanel">
       <h2>Топ игроков по заходам <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
       <div class="tbl-wrap" id="topPlayersBox"></div>
     </div>
@@ -923,9 +926,9 @@ function renderCards(d){
   const inter = d.adInterstitial || 0;
   const total = rewarded + inter;
   ads.innerHTML = 
-    '<span style="color:#059669;">Rewarded: '+rewarded+' ('+(total ? Math.round(rewarded/total*100) : 0)+'%)</span>' +
-    '<span style="color:#6366f1;">Interstitial: '+inter+' ('+(total ? Math.round(inter/total*100) : 0)+'%)</span>' +
-    '<span style="color:#ef4444;">Ошибки: '+d.adFailed+'</span>';
+    '<span style="color:#059669;">Rewarded (награда): '+rewarded+' ('+(total ? Math.round(rewarded/total*100) : 0)+'%)</span>' +
+    '<span style="color:#6366f1;">Interstitial (между): '+inter+' ('+(total ? Math.round(inter/total*100) : 0)+'%)</span>' +
+    '<span style="color:#ef4444;">Ошибки/пропуски: '+d.adFailed+'</span>';
 }
 
 let charts = {};
@@ -1072,8 +1075,7 @@ function confirmReset(){if(confirm('Вы уверены, что хотите П�
 
 initStatsTable().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('🚀 [BOOT] Сервер запущен (Компактный дашборд)');
-    console.log('   Health: http://0.0.0.0:' + PORT + '/health');
+    console.log('🚀 [BOOT] Сервер запущен (4 вкладки, страница скроллится)');
   });
 }).catch(e => {
   console.error('[BOOT] init failed:', e);
