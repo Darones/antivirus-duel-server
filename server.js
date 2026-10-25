@@ -56,7 +56,6 @@ async function initStatsTable() {
       );
       if (r.rowCount > 0) console.log('[STATS] Removed', r.rowCount, 'events from test accounts');
     } catch (e) { console.warn('[STATS] Cleanup failed:', e.message); }
-    // Migrate events.jsonl once when the database is empty.
     try {
       if (fs.existsSync(STATS_FILE)) {
         const lines = fs.readFileSync(STATS_FILE, 'utf8').split(String.fromCharCode(10)).filter(Boolean);
@@ -95,7 +94,6 @@ const VK_APP_SECRET_TANKS = process.env.VK_APP_SECRET_TANKS || '';
 const OK_APP_SECRET       = process.env.OK_APP_SECRET || '';
 const OK_APP_SECRET_TANKS = process.env.OK_APP_SECRET_TANKS || '';
 
-// [PAYMENTS] Товары (id должны совпадать с SHOP_ITEMS в index.html)
 const SHOP_ITEMS = {
   bombs_pack:     { title: 'Набор бомб ×5',  price: 5,  photo_url: 'https://darones.github.io/antivirus/logo.png' },
   bombs_pack_big: { title: 'Набор бомб ×20', price: 15, photo_url: 'https://darones.github.io/antivirus/logo.png' },
@@ -112,7 +110,6 @@ const VK_SHOP_ITEMS_BY_APP = {
   '512005381577':  TANKS_SHOP_ITEMS,
   '512004990432': SHOP_ITEMS,
 };
-// [PAYMENTS] Хранилище покупок: userId → Set(itemId)
 const purchases = new Map();
 
 function validateOKSig(params, secretOverride) {
@@ -121,7 +118,7 @@ function validateOKSig(params, secretOverride) {
   const { sig, access_token, ...rest } = params;
   if (!sig) return false;
   const secretKey = crypto.createHash('md5').update((access_token || '') + secret).digest('hex');
-  const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
+  const sorted = Object.keys(rest).sort().map(k => k + '=' + rest[k]).join('&');
   const hash = crypto.createHash('md5').update(sorted + secretKey).digest('hex');
   return hash === sig;
 }
@@ -149,7 +146,7 @@ function validateVKParams(params) {
   if (!VK_APP_SECRET) return true;
   const { sign, ...rest } = params;
   if (!sign) return false;
-  const sorted = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
+  const sorted = Object.keys(rest).sort().map(k => k + '=' + rest[k]).join('&');
   const hash = crypto.createHmac('sha256', VK_APP_SECRET).update(sorted)
     .digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return hash === sign;
@@ -173,7 +170,6 @@ function setCORS(res){
 const server = http.createServer((req, res) => {
   setCORS(res);
   if(req.method === 'OPTIONS'){ res.writeHead(204); res.end(); return; }
-  // POST /stats/event — приём батча событий от клиента
   if (req.url === '/stats/event' && req.method === 'POST') {
     let body = '';
     req.on('data', c => { body += c; });
@@ -217,7 +213,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /stats/reset?token=XXX — очистить events.jsonl
   if (req.url.startsWith('/stats/reset')) {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
@@ -241,7 +236,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /stats/player?id=XXX&token=XXX
   if (req.url.startsWith('/stats/player')) {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
@@ -269,21 +263,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /stats/data?token=XXX — сводка в JSON
   if (req.url.startsWith('/stats/data')) {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
       const token = urlObj.searchParams.get('token') || '';
       if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      // Возвращаем сводку сразу для всех игр (antivirus и match3)
       const summary = await buildStatsSummary();
       res.end(JSON.stringify(summary));
     })().catch(e => { console.error('[STATS/data]', e); res.writeHead(500); res.end('error'); });
     return;
   }
 
-  // GET /stats/dashboard?token=XXX — HTML-страница с графиками
   if (req.url.startsWith('/stats/dashboard')) {
     const urlObj = new URL(req.url, 'http://x');
     const token = urlObj.searchParams.get('token') || '';
@@ -297,11 +288,10 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, waiting: waiting.length }));
     return;
   }
-  // [PAYMENTS] Обработка платёжных уведомлений ОК (GET-запрос)
+  
   if (req.url.startsWith('/ok/pay')) {
     const urlObj = new URL(req.url, 'http://x');
     const params = Object.fromEntries(urlObj.searchParams);
-    console.log('[OK-PAY-RAW]', JSON.stringify(params));
     const rawAppId = String(params.app_id || urlObj.searchParams.get('app') || '');
     const appParam = rawAppId || '512004990432';
     const isTanks = (appParam === '54786750') || (appParam === '512005381577');
@@ -322,7 +312,7 @@ const server = http.createServer((req, res) => {
     const orderId = params.order_id || params.transaction_id;
 
     if (isOKRequest) {
-      console.log('[OK-PAY] OK request — sig check skipped');
+      // skip sig
     } else if (okSecret) {
       const { sig, access_token, ...rest } = params;
       if (sig) {
@@ -330,7 +320,6 @@ const server = http.createServer((req, res) => {
         const sorted = Object.keys(rest).sort().map(k => k + '=' + rest[k]).join('&');
         const expected = crypto.createHash('md5').update(sorted + secretKey).digest('hex');
         if (expected !== sig) {
-          console.warn('[OK-PAY] invalid sig');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end('{"status":"error","error_code":104,"error_msg":"invalid signature"}');
           return;
@@ -387,7 +376,7 @@ const server = http.createServer((req, res) => {
     res.end('{"status":"ok"}');
     return;
   }
-  // [PAYMENTS] Обработка платёжных уведомлений VK
+  
   if (req.url === '/vk/pay' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -437,7 +426,6 @@ const server = http.createServer((req, res) => {
 
         res.writeHead(200); res.end(JSON.stringify({ response: { error: { error_code: 1, error_msg: 'Unknown notification_type', critical: true } } }));
       } catch (e) {
-        console.error('[PAY] error:', e.message);
         res.writeHead(500); res.end();
       }
     });
@@ -485,7 +473,6 @@ function joinQueue(ws) {
   if (!player || player.roomId) return;
   const idx = waiting.findIndex(w => w.ws === ws);
   if (idx >= 0) waiting.splice(idx, 1);
-
   if (waiting.length > 0) {
     const opp = waiting.shift();
     const roomId = createRoomId();
@@ -512,7 +499,6 @@ function joinRoom(ws, msg) {
   if (!roomId) return;
   const player = players.get(ws);
   if (!player) return;
-
   const existing = rooms.get(roomId);
   if (existing && existing.players.length < 2) {
     existing.players.push(ws);
@@ -522,7 +508,6 @@ function joinRoom(ws, msg) {
     existing.startedAt = Date.now();
     return;
   }
-
   const room = { id: roomId, players: [ws], createdAt: Date.now(), startedAt: null };
   rooms.set(roomId, room);
   player.roomId = roomId;
@@ -569,7 +554,6 @@ function handleLeave(ws) {
   if (!player) return;
   const idx = waiting.findIndex(w => w.ws === ws);
   if (idx >= 0) waiting.splice(idx, 1);
-
   if (player.roomId) {
     const room = rooms.get(player.roomId);
     if (room) {
@@ -619,19 +603,17 @@ async function buildStatsSummary() {
   }
 
   const apps = { antivirus: [], match3: [], combined: events };
-
   for (const e of events) {
     const a = e.app || 'antivirus';
     if (apps[a]) apps[a].push(e);
   }
 
-  const result = {
+  return {
     combined: processEvents(apps.combined, 30),
     antivirus: processEvents(apps.antivirus, 30),
     match3: processEvents(apps.match3, 100),
     serverTime: Math.floor(Date.now() / 1000)
   };
-  return result;
 }
 
 function processEvents(events, maxLevels) {
@@ -697,11 +679,7 @@ function processEvents(events, maxLevels) {
     if (e.playerId && e.ev !== 'session_end' && e.ev !== 'app_close') {
       const previous = lastSeen[e.playerId] || {};
       lastSeen[e.playerId] = {
-        t,
-        screen: e.screen || previous.screen || '',
-        mode: e.mode || previous.mode || '',
-        level: e.level ?? previous.level ?? null,
-        platform: e.platform || previous.platform || ''
+        t, screen: e.screen || previous.screen || '', mode: e.mode || previous.mode || '', level: e.level ?? previous.level ?? null, platform: e.platform || previous.platform || ''
       };
     }
   }
@@ -713,15 +691,10 @@ function processEvents(events, maxLevels) {
   }
 
   const allDurations = Object.values(sessionsByPlayer).flat();
-  const avgSession = allDurations.length
-    ? Math.round(allDurations.reduce((a,b)=>a+b,0) / allDurations.length)
-    : 0;
+  const avgSession = allDurations.length ? Math.round(allDurations.reduce((a,b)=>a+b,0) / allDurations.length) : 0;
 
   const days = Object.keys(byDay).sort().slice(-30).map(day => ({
-    day,
-    players: byDay[day].players.size,
-    sessions: byDay[day].sessions,
-    events: byDay[day].events
+    day, players: byDay[day].players.size, sessions: byDay[day].sessions, events: byDay[day].events
   }));
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -756,12 +729,7 @@ function processEvents(events, maxLevels) {
 
   const funnel = [];
   for (let i = 1; i <= maxLevels; i++) {
-    funnel.push({
-      level: i,
-      started: levelStart[i] || 0,
-      won: levelEnd[i] || 0,
-      lost: levelFail[i] || 0
-    });
+    funnel.push({ level: i, started: levelStart[i] || 0, won: levelEnd[i] || 0, lost: levelFail[i] || 0 });
   }
 
   const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','purchase','ad_watch','share','level_abandon']);
@@ -770,18 +738,9 @@ function processEvents(events, maxLevels) {
     .slice(-150)
     .reverse()
     .map(e => ({
-      t: Number(e.t) || 0,
-      ev: e.ev,
-      player: e.playerId || '—',
-      platform: e.platform || '',
-      level: e.level ?? null,
-      mode: e.mode || '',
-      won: !!e.won,
-      screen: e.screen || '',
-      item: e.item || '',
-      kind: e.kind || '',
-      amount: e.amount ?? null,
-      ok: e.ok === true ? true : (e.ok === false ? false : null)
+      t: Number(e.t) || 0, ev: e.ev, player: e.playerId || '—', platform: e.platform || '',
+      level: e.level ?? null, mode: e.mode || '', won: !!e.won, screen: e.screen || '',
+      item: e.item || '', kind: e.kind || '', amount: e.amount ?? null, ok: e.ok === true ? true : (e.ok === false ? false : null)
     }));
 
   const playerSessions = new Map();
@@ -790,31 +749,12 @@ function processEvents(events, maxLevels) {
       playerSessions.set(e.playerId, (playerSessions.get(e.playerId) || 0) + 1);
     }
   }
-  const topPlayers = [...playerSessions.entries()]
-    .map(([playerId, count]) => ({ playerId, count }))
-    .sort((a,b) => b.count - a.count)
-    .slice(0, 100);
+  const topPlayers = [...playerSessions.entries()].map(([playerId, count]) => ({ playerId, count })).sort((a,b) => b.count - a.count).slice(0, 100);
 
   return {
-    totalEvents: events.length,
-    uniquePlayers: players.size,
-    avgSessionSec: avgSession,
-    purchases,
-    adWatched,
-    adFailed,
-    adRewarded,
-    adInterstitial,
-    days,
-    eventCounts,
-    funnel,
-    screens,
-    lastScreen,
-    onlineNowCount: onlineNow.length,
-    onlineNow: onlineNow.slice(0,20),
-    onlinePeak24h: peak,
-    historyOnline,
-    recentLog: logEvents,
-    topPlayers
+    totalEvents: events.length, uniquePlayers: players.size, avgSessionSec: avgSession,
+    purchases, adWatched, adFailed, adRewarded, adInterstitial, days, eventCounts, funnel, screens, lastScreen,
+    onlineNowCount: onlineNow.length, onlineNow: onlineNow.slice(0,20), onlinePeak24h: peak, historyOnline, recentLog: logEvents, topPlayers
   };
 }
 
@@ -823,88 +763,100 @@ function renderStatsDashboard(token) {
 <meta charset="utf-8"><title>Антивирус — Статистика</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:10px;overflow:hidden}
-h1{margin:0 0 4px;font-size:18px}
-h2{font-size:13px;margin:0 0 4px;color:#334155;font-weight:700;display:flex;justify-content:space-between;align-items:center}
-.tabs{display:flex;gap:6px;margin-bottom:10px}
-.tab-btn{padding:6px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;font-weight:600;color:#475569}
-.tab-btn.active{background:#6366f1;color:#fff;border-color:#6366f1}
-.cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:6px 0 10px}
-.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;text-align:center}
-.card b{display:block;font-size:20px;color:#6366f1;line-height:1.1}
-.card.card-online{background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-color:#059669}
-.card.card-online b{color:#fff;font-size:26px}
-.card.card-online small{color:#d1fae5}
-.card small{color:#64748b;font-size:10px}
-.panels{display:grid;grid-template-columns:minmax(240px,1fr) 1.6fr;gap:10px;align-items:start}
-.panel{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px;transition:all 0.2s}
-.panel.fullscreen{position:fixed;inset:10px;z-index:1000;overflow:auto}
-table{width:100%;border-collapse:collapse;font-size:11px}
-th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #e2e8f0}
-th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#475569;position:sticky;top:0}
-tr:last-child td{border-bottom:none}
-.tbl-scroll{max-height:200px;overflow-y:auto}
-.funnel-wrap{position:relative;height:320px;width:100%}
-.panel.fullscreen .funnel-wrap{height:calc(100vh - 100px)}
-.log-scroll{max-height:260px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11.5px;line-height:1.5;background:#0f172a;color:#e2e8f0;border-radius:6px;padding:6px 10px}
-.panel.fullscreen .log-scroll{max-height:calc(100vh - 100px)}
-.log-line{display:flex;gap:8px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.04)}
-.log-line:last-child{border-bottom:none}
-.log-time{color:#64748b;flex-shrink:0;min-width:52px}
-.log-player{color:#94a3b8;flex-shrink:0;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.log-text{color:#e2e8f0;flex:1}
-.log-text.good{color:#86efac}.log-text.bad{color:#fca5a5}.log-text.warn{color:#fcd34d}.log-text.pay{color:#c4b5fd}
-.expand-btn{font-size:11px;padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155}
-.expand-btn:hover{background:#e2e8f0}
-.player-history-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px}
-.player-history-dialog{width:min(720px,100%);max-height:85vh;background:#fff;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
-.player-history-dialog h2{font-size:16px;margin:0}
-.player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px}
-.player-history-exit{color:#dc2626;font-weight:700}
-@media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.panels{grid-template-columns:1fr}}
+*{box-sizing:border-box;}
+body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;height:100vh;display:flex;flex-direction:column;gap:8px;overflow:hidden;}
+.header{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;}
+.header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.header h1{margin:0;font-size:16px;}
+#updated{color:#64748b;font-size:11px;}
+.tabs{display:flex;gap:4px;}
+.tab-btn{padding:4px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;font-weight:600;color:#475569;font-size:12px;}
+.tab-btn.active{background:#6366f1;color:#fff;border-color:#6366f1;}
+.actions{display:flex;gap:8px;}
+.cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;flex-shrink:0;}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:4px 6px;text-align:center;}
+.card b{display:block;font-size:16px;color:#6366f1;line-height:1.1;}
+.card.card-online{background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-color:#059669;}
+.card.card-online b{color:#fff;font-size:20px;}
+.card.card-online small{color:#d1fae5;}
+.card small{color:#64748b;font-size:9px;text-transform:uppercase;}
+.main-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1.5fr;gap:8px;}
+.col-left{display:flex;flex-direction:column;gap:8px;min-height:0;}
+.col-right{display:flex;flex-direction:column;gap:8px;min-height:0;}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;min-height:0;}
+.panel h2{margin:0 0 6px 0;font-size:12px;display:flex;justify-content:space-between;color:#334155;}
+.tbl-wrap{flex:1;overflow-y:auto;min-height:0;}
+.log-wrap{flex:1;overflow-y:auto;min-height:0;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
+.chart-wrap{flex:1;position:relative;min-height:0;}
+.panel.bottom{grid-column:span 2;flex:0 0 80px;flex-direction:row;align-items:center;justify-content:space-between;}
+.panel.bottom h2{margin:0;white-space:nowrap;}
+.ads-wrap{display:flex;gap:15px;font-size:12px;font-weight:600;}
+table{width:100%;border-collapse:collapse;font-size:11px;}
+th,td{padding:2px 6px;text-align:left;border-bottom:1px solid #e2e8f0;}
+th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;color:#475569;position:sticky;top:0;z-index:1;}
+tr:last-child td{border-bottom:none;}
+.log-line{display:flex;gap:6px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.log-time{color:#64748b;flex-shrink:0;min-width:40px;}
+.log-player{color:#94a3b8;flex-shrink:0;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.log-text{color:#e2e8f0;flex:1;}
+.log-text.good{color:#86efac;}.log-text.bad{color:#fca5a5;}.log-text.warn{color:#fcd34d;}.log-text.pay{color:#c4b5fd;}
+.expand-btn{font-size:10px;padding:1px 6px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;cursor:pointer;font-weight:600;color:#334155;}
+.expand-btn:hover{background:#e2e8f0;}
+.panel.expanded{position:fixed;inset:10px;z-index:1000;padding:16px;box-shadow:0 0 0 100vmax rgba(0,0,0,.5);}
+.panel.expanded .chart-wrap{height:calc(100vh - 80px);}
+.panel.expanded .log-wrap, .panel.expanded .tbl-wrap{max-height:calc(100vh - 80px);}
+.player-history-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px;}
+.player-history-dialog{width:min(720px,100%);max-height:85vh;background:#fff;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;}
+.player-history-dialog h2{font-size:16px;margin:0;}
+.player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;}
+.player-history-exit{color:#dc2626;font-weight:700;}
+@media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.main-grid{grid-template-columns:1fr}}
 </style></head><body>
 
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-  <h1 id="pageTitle">Антивирус — Статистика</h1>
-  <div style="display:flex;gap:10px;">
-    <button onclick="copyJson()" class="expand-btn" style="color:#334155;">📋 Скопировать JSON</button>
+<div class="header">
+  <div class="header-left">
+    <h1 id="pageTitle">Антивирус — Статистика</h1>
+    <span id="updated"></span>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('combined', this)">Общая</button>
+      <button class="tab-btn" onclick="switchTab('antivirus', this)">Антивирус</button>
+      <button class="tab-btn" onclick="switchTab('match3', this)">Match-3</button>
+    </div>
+  </div>
+  <div class="actions">
+    <button onclick="copyJson()" class="expand-btn" style="color:#334155;">📋 JSON</button>
     <button onclick="confirmReset()" class="expand-btn" style="color:#ef4444;border-color:#fca5a5;">🗑 Стереть</button>
   </div>
-</div>
-<p id="updated" style="color:#64748b;font-size:11px;margin:0 0 10px"></p>
-
-<div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('combined', this)">Общая статистика</button>
-  <button class="tab-btn" onclick="switchTab('antivirus', this)">Антивирус (Dr. Mario)</button>
-  <button class="tab-btn" onclick="switchTab('match3', this)">Три в ряд (Match-3)</button>
 </div>
 
 <div class="cards" id="cards"></div>
 
-<div class="panels">
-  <div class="panel">
-    <h2>Активные сейчас <span id="onlineCount" style="font-size:11px;color:#64748b"></span></h2>
-    <div class="tbl-scroll" style="max-height:150px"><table id="tblOnline"></table></div>
+<div class="main-grid">
+  <div class="col-left">
+    <div class="panel" style="flex:1;">
+      <h2>Активные сейчас <span id="onlineCount" style="font-size:10px;color:#64748b"></span></h2>
+      <div class="tbl-wrap"><table id="tblOnline"></table></div>
+    </div>
+    <div class="panel" id="logPanel" style="flex:1;">
+      <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶</button></h2>
+      <div class="log-wrap" id="logBox"></div>
+    </div>
   </div>
   
-  <div class="panel" id="funnelPanel" style="grid-row:span 2">
-    <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶ Развернуть</button></h2>
-    <div class="funnel-wrap"><canvas id="chFunnel"></canvas></div>
+  <div class="col-right">
+    <div class="panel" id="funnelPanel" style="flex:0 0 250px;">
+      <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
+      <div class="chart-wrap"><canvas id="chFunnel"></canvas></div>
+    </div>
+    <div class="panel" id="topPlayersPanel" style="flex:1;">
+      <h2>Топ игроков по заходам <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
+      <div class="tbl-wrap" id="topPlayersBox"></div>
+    </div>
   </div>
 
-  <div class="panel">
-    <h2>Реклама <span id="adSummary" style="font-size:11px;color:#64748b"></span></h2>
-    <table id="tblAds"></table>
-  </div>
-
-  <div class="panel" id="logPanel" style="grid-column:1/-1">
-    <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶ Развернуть</button></h2>
-    <div class="log-scroll" id="logBox"></div>
-  </div>
-
-  <div class="panel" id="topPlayersPanel" style="grid-column:1/-1">
-    <h2>Топ игроков по заходам <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶ Развернуть</button></h2>
-    <div class="tbl-scroll" style="max-height:200px" id="topPlayersBox"></div>
+  <div class="panel bottom">
+    <h2>Реклама</h2>
+    <div class="ads-wrap" id="tblAds"></div>
   </div>
 </div>
 
@@ -943,9 +895,6 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();
 
 function renderAll() {
   const d = _lastData[currentTab];
-  document.getElementById('pageTitle').textContent = 
-    currentTab === 'combined' ? 'Общая статистика' : 
-    currentTab === 'antivirus' ? 'Антивирус (Dr. Mario)' : 'Три в ряд (Match-3)';
   renderCards(d);
   renderCharts(d);
   renderTables(d);
@@ -962,7 +911,7 @@ function renderCards(d){
     ['Событий',    d.totalEvents,    false],
     ['Ср. сессия', d.avgSessionSec ? Math.round(d.avgSessionSec/60) + ' мин' : '—', false],
     ['Покупок',    d.purchases,      false],
-    ['Всего реклам', d.adWatched,    false],
+    ['Реклам OK',  d.adWatched,      false],
     ['Реклама ✗',  d.adFailed,       false]
   ];
   c.innerHTML = items.map(([t,v,hl]) =>
@@ -973,12 +922,10 @@ function renderCards(d){
   const rewarded = d.adRewarded || 0;
   const inter = d.adInterstitial || 0;
   const total = rewarded + inter;
-  document.getElementById('adSummary').textContent = 'Всего: ' + total;
   ads.innerHTML = 
-    '<tr><th>Тип</th><th>Показов</th><th>Доля</th></tr>' +
-    '<tr><td>Rewarded (за награду)</td><td>' + rewarded + '</td><td>' + (total ? Math.round(rewarded/total*100) : 0) + '%</td></tr>' +
-    '<tr><td>Interstitial (между)</td><td>' + inter + '</td><td>' + (total ? Math.round(inter/total*100) : 0) + '%</td></tr>' +
-    '<tr><td style="color:#ef4444">Ошибки/пропуски</td><td>' + d.adFailed + '</td><td>—</td></tr>';
+    '<span style="color:#059669;">Rewarded: '+rewarded+' ('+(total ? Math.round(rewarded/total*100) : 0)+'%)</span>' +
+    '<span style="color:#6366f1;">Interstitial: '+inter+' ('+(total ? Math.round(inter/total*100) : 0)+'%)</span>' +
+    '<span style="color:#ef4444;">Ошибки: '+d.adFailed+'</span>';
 }
 
 let charts = {};
@@ -987,25 +934,17 @@ function renderCharts(d){
   const cv = document.getElementById('chFunnel');
   if(!cv) return;
   
-  const labels = d.funnel.map(x=>'Ур.'+x.level);
-  const startedData = d.funnel.map(x=>x.started);
-  const wonData = d.funnel.map(x=>x.won);
-  const lostData = d.funnel.map(x=>x.lost);
-
   charts.funnel = new Chart(cv, {
     type:'bar',
-    data:{ labels: labels, datasets:[
-      { label:'Начали',    data: startedData, backgroundColor:'#94a3b8' },
-      { label:'Прошли',    data: wonData,     backgroundColor:'#10b981' },
-      { label:'Проиграли', data: lostData,    backgroundColor:'#ef4444' }
+    data:{ labels: d.funnel.map(x=>'Ур.'+x.level), datasets:[
+      { label:'Начали',    data: d.funnel.map(x=>x.started), backgroundColor:'#94a3b8' },
+      { label:'Прошли',    data: d.funnel.map(x=>x.won),     backgroundColor:'#10b981' },
+      { label:'Проиграли', data: d.funnel.map(x=>x.lost),    backgroundColor:'#ef4444' }
     ]},
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{labels:{boxWidth:8,font:{size:9}}} },
-      scales:{ 
-        x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}}, 
-        y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} 
-      }
+      scales:{ x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}}, y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} }
     }
   });
 }
@@ -1017,7 +956,7 @@ function renderTables(d){
   if(!t3) return;
   const rows = (d.onlineNow || []).slice().sort((a,b)=>a.ageSec-b.ageSec);
   if(rows.length === 0){
-    t3.innerHTML = '<tr><td style="color:#64748b">Никого — все ушли</td></tr>';
+    t3.innerHTML = '<tr><td style="color:#64748b">Никого</td></tr>';
   } else {
     t3.innerHTML = '<tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
       + rows.map(r=>'<tr><td><a href="#" data-player-id="'+esc(r.playerId)+'" style="color:#6366f1;text-decoration:underline">'+esc(r.playerId)+'</a></td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('');
@@ -1032,7 +971,7 @@ function renderTopPlayers(d){
     box.innerHTML = '<div style="color:#64748b;font-size:11px;padding:6px">Пока никого</div>';
     return;
   }
-  box.innerHTML = '<table><tr><th style="width:40px">#</th><th>Игрок</th><th style="width:90px">Заходов</th></tr>'
+  box.innerHTML = '<table><tr><th style="width:30px">#</th><th>Игрок</th><th style="width:60px">Заходов</th></tr>'
     + rows.map((r,i) => '<tr><td>'+(i+1)+'</td><td><a href="#" data-player-id="'+String(r.playerId).replace(/"/g,'&quot;')+'" style="color:#6366f1;text-decoration:underline">'+String(r.playerId).replace(/</g,'&lt;')+'</a></td><td><b>'+r.count+'</b></td></tr>').join('') + '</table>';
 }
 
@@ -1085,7 +1024,17 @@ function renderLog(d){
 
 function toggleFullscreen(id) {
   const el = document.getElementById(id);
-  if(el) el.classList.toggle('fullscreen');
+  if(!el) return;
+  el.classList.toggle('expanded');
+  const btn = el.querySelector('.expand-btn');
+  if(btn) btn.textContent = el.classList.contains('expanded') ? '✕ Закрыть' : '⛶';
+  if(el.classList.contains('expanded')) {
+    document.body.style.overflow = 'hidden';
+    if(id === 'funnelPanel' && charts.funnel) setTimeout(()=>charts.funnel.resize(), 50);
+  } else {
+    document.body.style.overflow = '';
+    if(id === 'funnelPanel' && charts.funnel) setTimeout(()=>charts.funnel.resize(), 50);
+  }
 }
 
 async function showPlayerHistory(id){
@@ -1123,9 +1072,8 @@ function confirmReset(){if(confirm('Вы уверены, что хотите П�
 
 initStatsTable().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('🚀 [BOOT] Сервер запущен (Исправлены вложенные кавычки)');
+    console.log('🚀 [BOOT] Сервер запущен (Компактный дашборд)');
     console.log('   Health: http://0.0.0.0:' + PORT + '/health');
-    console.log('   Stats: ' + (pgPool ? 'Postgres' : 'file (no DATABASE_URL)'));
   });
 }).catch(e => {
   console.error('[BOOT] init failed:', e);
