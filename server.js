@@ -889,7 +889,7 @@ function ruScreen(key){ return key ? (SCREEN_NAMES[key] || key) : '—'; }
 
 function switchTab(tab, btn) {
   currentTab = tab;
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tabs .tab-btn').forEach(b => b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   if(_lastData) renderAll();
 }
