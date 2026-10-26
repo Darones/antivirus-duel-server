@@ -773,7 +773,7 @@ function renderStatsDashboard(token) {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 *{box-sizing:border-box;}
-body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;min-height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:8px;}
 .header{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;}
 .header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .header h1{margin:0;font-size:16px;}
@@ -789,17 +789,17 @@ body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;pa
 .card.card-online b{color:#fff;font-size:20px;}
 .card.card-online small{color:#d1fae5;}
 .card small{color:#64748b;font-size:9px;text-transform:uppercase;}
-.main-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:8px;}
-.col-left{display:flex;flex-direction:column;gap:8px;}
-.col-right{display:flex;flex-direction:column;gap:8px;}
+.main-grid{display:grid;grid-template-columns:1fr 2fr;grid-template-rows:minmax(0,1fr) auto;flex:1;min-height:0;gap:8px;}
+.col-left{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden;}
+.col-right{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden;}
 .panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;}
 .panel h2{margin:0 0 6px 0;font-size:12px;display:flex;justify-content:space-between;color:#334155;}
-.tbl-wrap{height:250px;overflow-y:auto;}
-.log-wrap{height:300px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
-.chart-wrap{height:160px;position:relative;overflow-x:auto;overflow-y:hidden;width:100%;}.chart-wrap canvas{display:block;}
-.panel.bottom{grid-column:span 2;flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;}
+.tbl-wrap{height:150px;overflow-y:auto;}
+#logPanel{flex:1;min-height:0;}.log-wrap{flex:1;min-height:80px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
+#funnelPanel{flex:1;min-height:0;}.chart-wrap{flex:1;min-height:90px;height:auto;position:relative;overflow-x:hidden;overflow-y:hidden;width:100%;}.chart-wrap canvas{display:block;}
+.panel.bottom{grid-column:span 2;flex-direction:row;align-items:center;justify-content:space-between;padding:4px 12px;}
 .panel.bottom h2{margin:0;white-space:nowrap;}
-.ads-wrap{display:flex;gap:10px;font-size:13px;font-weight:600;width:100%;}.ad-card{flex:1;min-width:0;padding:10px;border-radius:8px;color:#fff;text-align:center;}.ad-card b{display:block;font-size:22px;margin-top:4px;}.ad-rewarded{background:#16a34a;}.ad-interstitial{background:#2563eb;}.ad-failed{background:#dc2626;}.period-filters{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}.period-btn.active{background:#6366f1;color:#fff;border-color:#6366f1;}
+.ads-wrap{display:flex;gap:8px;font-size:11px;font-weight:600;width:100%;}.ad-card{flex:1;min-width:0;padding:3px 8px;border-radius:6px;color:#fff;text-align:center;}.ad-card b{display:inline-block;font-size:13px;margin-left:6px;}.ad-rewarded{background:#16a34a;}.ad-interstitial{background:#2563eb;}.ad-failed{background:#dc2626;}.period-filters{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}.period-btn.active{background:#6366f1;color:#fff;border-color:#6366f1;}
 table{width:100%;border-collapse:collapse;font-size:11px;}
 th,td{padding:2px 6px;text-align:left;border-bottom:1px solid #e2e8f0;}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;color:#475569;position:sticky;top:0;z-index:1;}
@@ -819,7 +819,7 @@ tr:last-child td{border-bottom:none;}
 .player-history-dialog h2{font-size:16px;margin:0;}
 .player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;}
 .player-history-exit{color:#dc2626;font-weight:700;}
-@media(max-width:760px){.cards{grid-template-columns:repeat(4,1fr)}.main-grid{grid-template-columns:1fr}}
+@media(max-width:760px){body{height:auto;overflow-y:auto;}.cards{grid-template-columns:repeat(4,1fr)}.main-grid{grid-template-columns:1fr;grid-template-rows:auto;flex:none;}.panel.bottom{grid-column:auto;}.log-wrap{height:300px;flex:none;}#funnelPanel{flex:none;}.chart-wrap{height:140px;flex:none;}}
 </style></head><body>
 
 <div class="header">
@@ -962,7 +962,7 @@ function renderCharts(d){
       { label:'Проиграли', data: d.funnel.map(x=>x.lost),    backgroundColor:'#ef4444' }
     ]},
     options:{
-      responsive:false, maintainAspectRatio:false,
+      responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{labels:{boxWidth:10,font:{size:12}}} },
       scales:{ x:{stacked:true,ticks:{font:{size:12},maxRotation:60,minRotation:60}}, y:{stacked:true,ticks:{font:{size:12}},beginAtZero:true} }
     }
@@ -1006,7 +1006,7 @@ function renderLog(d){
   const now = _lastData.serverTime || Math.floor(Date.now()/1000);
   function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtTime(t){
-    const dt = now - t;
+    const dt = Math.max(0, now - t);
     if(dt < 60) return dt + 'с';
     if(dt < 3600) return Math.floor(dt/60) + 'м';
     if(dt < 86400) return Math.floor(dt/3600) + 'ч';
