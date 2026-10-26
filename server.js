@@ -267,9 +267,10 @@ const server = http.createServer((req, res) => {
     (async () => {
       const urlObj = new URL(req.url, 'http://x');
       const token = urlObj.searchParams.get('token') || '';
+      const period = urlObj.searchParams.get('period') || 'all';
       if (token !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      const summary = await buildStatsSummary();
+      const summary = await buildStatsSummary(period);
       res.end(JSON.stringify(summary));
     })().catch(e => { console.error('[STATS/data]', e); res.writeHead(500); res.end('error'); });
     return;
@@ -583,7 +584,7 @@ setInterval(() => {
   }
 }, 5000);
 
-async function buildStatsSummary() {
+async function buildStatsSummary(period = 'all') {
   let events = [];
   if (pgPool) {
     try {
@@ -600,6 +601,12 @@ async function buildStatsSummary() {
         events.push(e);
       } catch {}
     }
+  }
+
+  const periodSeconds = ({ '1': 86400, '7': 604800, '30': 2592000 })[period];
+  if (periodSeconds) {
+    const cutoff = Date.now() / 1000 - periodSeconds;
+    events = events.filter(event => Number(event.t) > cutoff);
   }
 
   const apps = { antivirus: [], match3: [], tanks: [], combined: [] };
@@ -702,7 +709,7 @@ function processEvents(events, maxLevels) {
   const nowSec = Math.floor(Date.now() / 1000);
   const onlineNow = [];
   for (const [pid, info] of Object.entries(lastSeen)) {
-    const age = nowSec - info.t;
+    const age = Math.max(0, nowSec - info.t);
     if (age <= ONLINE_WINDOW) onlineNow.push({ playerId: pid, lastSeen: info.t, ageSec: age, screen: info.screen, mode: info.mode, level: info.level, platform: info.platform });
   }
   onlineNow.sort((a,b)=>a.ageSec-b.ageSec);
@@ -789,10 +796,10 @@ body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;pa
 .panel h2{margin:0 0 6px 0;font-size:12px;display:flex;justify-content:space-between;color:#334155;}
 .tbl-wrap{height:250px;overflow-y:auto;}
 .log-wrap{height:300px;overflow-y:auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;line-height:1.4;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:4px 8px;}
-.chart-wrap{height:250px;position:relative;}
+.chart-wrap{height:160px;position:relative;overflow-x:auto;overflow-y:hidden;width:100%;}.chart-wrap canvas{display:block;}
 .panel.bottom{grid-column:span 2;flex-direction:row;align-items:center;justify-content:space-between;padding:10px 16px;}
 .panel.bottom h2{margin:0;white-space:nowrap;}
-.ads-wrap{display:flex;gap:30px;font-size:14px;font-weight:600;}
+.ads-wrap{display:flex;gap:10px;font-size:13px;font-weight:600;width:100%;}.ad-card{flex:1;min-width:0;padding:10px;border-radius:8px;color:#fff;text-align:center;}.ad-card b{display:block;font-size:22px;margin-top:4px;}.ad-rewarded{background:#16a34a;}.ad-interstitial{background:#2563eb;}.ad-failed{background:#dc2626;}.period-filters{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}.period-btn.active{background:#6366f1;color:#fff;border-color:#6366f1;}
 table{width:100%;border-collapse:collapse;font-size:11px;}
 th,td{padding:2px 6px;text-align:left;border-bottom:1px solid #e2e8f0;}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;color:#475569;position:sticky;top:0;z-index:1;}
@@ -825,6 +832,12 @@ tr:last-child td{border-bottom:none;}
       <button class="tab-btn" onclick="switchTab('match3', this)">Match-3</button>
       <button class="tab-btn" onclick="switchTab('tanks', this)">Танки</button>
     </div>
+    <div class="period-filters" aria-label="Период статистики">
+      <button class="tab-btn period-btn" data-period="1" onclick="setPeriod('1')">1 день</button>
+      <button class="tab-btn period-btn" data-period="7" onclick="setPeriod('7')">7 дней</button>
+      <button class="tab-btn period-btn" data-period="30" onclick="setPeriod('30')">30 дней</button>
+      <button class="tab-btn period-btn active" data-period="all" onclick="setPeriod('all')">Всё время</button>
+    </div>
   </div>
   <div class="actions">
     <button onclick="copyJson()" class="expand-btn" style="color:#334155;">📋 JSON</button>
@@ -837,26 +850,24 @@ tr:last-child td{border-bottom:none;}
 <div class="main-grid">
   <div class="col-left">
     <div class="panel">
-      <h2>Активные сейчас <span id="onlineCount" style="font-size:10px;color:#64748b"></span></h2>
+      <h2>Активные <span id="onlineCount" style="font-size:10px;color:#64748b"></span></h2>
       <div class="tbl-wrap"><table id="tblOnline"></table></div>
     </div>
+    <div class="panel" id="funnelPanel">
+      <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
+      <div class="chart-wrap"><canvas id="chFunnel" width="800" height="160"></canvas></div>
+    </div>
+  </div>
+  <div class="col-right">
     <div class="panel" id="logPanel">
       <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶</button></h2>
       <div class="log-wrap" id="logBox"></div>
     </div>
-  </div>
-  
-  <div class="col-right">
-    <div class="panel" id="funnelPanel">
-      <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
-      <div class="chart-wrap"><canvas id="chFunnel"></canvas></div>
-    </div>
     <div class="panel" id="topPlayersPanel">
-      <h2>Топ игроков по заходам <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
+      <h2>Топ игроков <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
       <div class="tbl-wrap" id="topPlayersBox"></div>
     </div>
   </div>
-
   <div class="panel bottom">
     <h2>Реклама</h2>
     <div class="ads-wrap" id="tblAds"></div>
@@ -867,6 +878,7 @@ tr:last-child td{border-bottom:none;}
 const TOKEN = ${JSON.stringify(token)};
 let _lastData = null;
 let currentTab = 'combined';
+let currentPeriod = 'all';
 const SCREEN_NAMES = {
   'welcome':'Приветствие','story':'Сюжет','menu':'Меню','levels':'Выбор ур.',
   'game':'Игра','pause':'Пауза','end':'Конец ур.','shop':'Магазин',
@@ -882,9 +894,15 @@ function switchTab(tab, btn) {
   if(_lastData) renderAll();
 }
 
+function setPeriod(period) {
+  currentPeriod = period;
+  document.querySelectorAll('[data-period]').forEach(button => button.classList.toggle('active', button.dataset.period === currentPeriod));
+  refresh();
+}
+
 async function refresh(){
   try{
-    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN));
+    const r=await fetch('/stats/data?token='+encodeURIComponent(TOKEN)+'&period='+encodeURIComponent(currentPeriod));
     if(!r.ok){document.body.innerHTML='<h1>403 — неверный токен</h1>';return;}
     const d=await r.json();
     _lastData=d;
@@ -923,12 +941,11 @@ function renderCards(d){
 
   const ads = document.getElementById('tblAds');
   const rewarded = d.adRewarded || 0;
-  const inter = d.adInterstitial || 0;
-  const total = rewarded + inter;
-  ads.innerHTML = 
-    '<span style="color:#059669;">Rewarded (награда): '+rewarded+' ('+(total ? Math.round(rewarded/total*100) : 0)+'%)</span>' +
-    '<span style="color:#6366f1;">Interstitial (между): '+inter+' ('+(total ? Math.round(inter/total*100) : 0)+'%)</span>' +
-    '<span style="color:#ef4444;">Ошибки/пропуски: '+d.adFailed+'</span>';
+  const interstitial = d.adInterstitial || 0;
+  const failed = d.adFailed || 0;
+  ads.innerHTML = '<div class="ad-card ad-rewarded">Rewarded<b>'+rewarded+'</b></div>'
+    + '<div class="ad-card ad-interstitial">Interstitial<b>'+interstitial+'</b></div>'
+    + '<div class="ad-card ad-failed">Ошибки<b>'+failed+'</b></div>';
 }
 
 let charts = {};
@@ -945,9 +962,9 @@ function renderCharts(d){
       { label:'Проиграли', data: d.funnel.map(x=>x.lost),    backgroundColor:'#ef4444' }
     ]},
     options:{
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{labels:{boxWidth:8,font:{size:9}}} },
-      scales:{ x:{stacked:true,ticks:{font:{size:7},maxRotation:60,minRotation:60}}, y:{stacked:true,ticks:{font:{size:8}},beginAtZero:true} }
+      responsive:false, maintainAspectRatio:false,
+      plugins:{ legend:{labels:{boxWidth:10,font:{size:12}}} },
+      scales:{ x:{stacked:true,ticks:{font:{size:12},maxRotation:60,minRotation:60}}, y:{stacked:true,ticks:{font:{size:12}},beginAtZero:true} }
     }
   });
 }
