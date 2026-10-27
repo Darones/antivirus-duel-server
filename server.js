@@ -16,7 +16,9 @@ const IGNORED_PLAYER_IDS = new Set([
 ]);
 function isIgnoredPlayer(playerId){
   if(!playerId) return false;
-  return IGNORED_PLAYER_IDS.has(String(playerId));
+  const idStr = String(playerId);
+  if(idStr.startsWith('anon_') || idStr.startsWith('match3_anon_')) return true;
+  return IGNORED_PLAYER_IDS.has(idStr);
 }
 
 // [STATS] Persistent statistics in Postgres.
@@ -605,7 +607,14 @@ async function buildStatsSummary(period = 'all') {
 
   const periodSeconds = ({ '1': 86400, '7': 604800, '30': 2592000 })[period];
   if (periodSeconds) {
-    const cutoff = Date.now() / 1000 - periodSeconds;
+    let cutoff = 0;
+    if (period === '1') {
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      cutoff = Math.floor(startOfDay.getTime() / 1000);
+    } else {
+      cutoff = Date.now() / 1000 - periodSeconds;
+    }
     events = events.filter(event => Number(event.t) > cutoff);
   }
 
@@ -644,7 +653,7 @@ function processEvents(events, maxLevels) {
   for (const e of events) {
     const t = Number(e.t) || 0;
     const d = t ? new Date(t * 1000) : new Date();
-    const day = d.toISOString().slice(0, 10);
+    const day = d.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' }).split('.').reverse().join('-');
     byDay[day] = byDay[day] || { players: new Set(), sessions: 0, events: 0 };
     byDay[day].events++;
     if (e.playerId) { players.add(e.playerId); byDay[day].players.add(e.playerId); }
