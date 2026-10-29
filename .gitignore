@@ -2,3 +2,7 @@
 patch-*.js
 
 node_modules/
+.env
+events.jsonl
+server.js.backup-*
+*.bak
