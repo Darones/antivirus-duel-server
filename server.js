@@ -778,7 +778,7 @@ function processEvents(events, maxLevels) {
 
 function renderStatsDashboard(token) {
   return `<!doctype html><html lang="ru"><head>
-<meta charset="utf-8"><title>Антивирус — Статистика</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Антивирус — Статистика</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 *{box-sizing:border-box;}
