@@ -750,7 +750,7 @@ function processEvents(events, maxLevels) {
     funnel.push({ level: i, started: levelStart[i] || 0, won: levelEnd[i] || 0, lost: levelFail[i] || 0 });
   }
 
-  const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','purchase','ad_watch','share','level_abandon']);
+  const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','transition_to_match3','purchase','ad_watch','share','level_abandon']);
   const logEvents = events
     .filter(e => LOG_EVENTS.has(e.ev))
     .slice(-150)
@@ -814,7 +814,8 @@ th,td{padding:2px 6px;text-align:left;border-bottom:1px solid #e2e8f0;}
 th{background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase;color:#475569;position:sticky;top:0;z-index:1;}
 tr:last-child td{border-bottom:none;}
 .log-line{display:flex;gap:6px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.04);}
-.log-time{color:#64748b;flex-shrink:0;min-width:40px;}
+.log-time{color:#64748b;flex-shrink:0;min-width:44px;font-weight:600;}
+.log-sep{color:#475569;flex-shrink:0;}
 .log-player{color:#94a3b8;flex-shrink:0;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .log-text{color:#e2e8f0;flex:1;}
 .log-text.good{color:#86efac;}.log-text.bad{color:#fca5a5;}.log-text.warn{color:#fcd34d;}.log-text.pay{color:#c4b5fd;}
@@ -829,6 +830,8 @@ tr:last-child td{border-bottom:none;}
 .player-history-events{overflow:auto;white-space:pre-wrap;font:12px/1.6 'SF Mono','Consolas',monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;}
 .player-history-exit{color:#dc2626;font-weight:700;}
 @media(max-width:760px){body{height:auto;overflow-y:auto;}.cards{grid-template-columns:repeat(4,1fr)}.main-grid{grid-template-columns:1fr;grid-template-rows:auto;flex:none;}.panel.bottom{grid-column:auto;}.log-wrap{height:300px;flex:none;}#funnelPanel{flex:none;}.chart-wrap{height:140px;flex:none;}}
+@media(max-width:768px){.cards{grid-template-columns:repeat(2,1fr)}.main-grid{grid-template-columns:1fr;grid-template-rows:auto}#logPanel{order:-1}#funnelPanel,#topPlayersPanel,.panel.bottom,#onlinePanel{order:0}.log-wrap{height:340px}.panel.collapsed .tbl-wrap,.panel.collapsed .chart-wrap,.panel.collapsed .ads-wrap{display:none}.panel-toggle{cursor:pointer;user-select:none}}
+@media(min-width:769px){.panel.collapsed .tbl-wrap,.panel.collapsed .chart-wrap,.panel.collapsed .ads-wrap{display:block}}
 </style></head><body>
 
 <div class="header">
@@ -842,10 +845,10 @@ tr:last-child td{border-bottom:none;}
       <button class="tab-btn" onclick="switchTab('tanks', this)">Танки</button>
     </div>
     <div class="period-filters" aria-label="Период статистики">
-      <button class="tab-btn period-btn" data-period="1" onclick="setPeriod('1')">1 день</button>
+      <button class="tab-btn period-btn active" data-period="1" onclick="setPeriod('1')">1 день</button>
       <button class="tab-btn period-btn" data-period="7" onclick="setPeriod('7')">7 дней</button>
       <button class="tab-btn period-btn" data-period="30" onclick="setPeriod('30')">30 дней</button>
-      <button class="tab-btn period-btn active" data-period="all" onclick="setPeriod('all')">Всё время</button>
+      <button class="tab-btn period-btn" data-period="all" onclick="setPeriod('all')">Всё время</button>
     </div>
   </div>
   <div class="actions">
@@ -858,12 +861,12 @@ tr:last-child td{border-bottom:none;}
 
 <div class="main-grid">
   <div class="col-left">
-    <div class="panel">
-      <h2>Активные <span id="onlineCount" style="font-size:10px;color:#64748b"></span></h2>
+    <div class="panel collapsed" id="onlinePanel">
+      <h2 class="panel-toggle" onclick="togglePanel('onlinePanel')">Активные <span id="onlineCount" style="font-size:10px;color:#64748b"></span> <span class="toggle-icon">▼</span></h2>
       <div class="tbl-wrap"><table id="tblOnline"></table></div>
     </div>
-    <div class="panel" id="funnelPanel">
-      <h2>Воронка по уровням <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
+    <div class="panel collapsed" id="funnelPanel">
+      <h2 class="panel-toggle"><span onclick="togglePanel('funnelPanel')">Воронка по уровням ▼</span> <button class="expand-btn" onclick="toggleFullscreen('funnelPanel')">⛶</button></h2>
       <div class="chart-wrap"><canvas id="chFunnel" width="800" height="160"></canvas></div>
     </div>
   </div>
@@ -872,13 +875,13 @@ tr:last-child td{border-bottom:none;}
       <h2>Живой лог <button class="expand-btn" onclick="toggleFullscreen('logPanel')">⛶</button></h2>
       <div class="log-wrap" id="logBox"></div>
     </div>
-    <div class="panel" id="topPlayersPanel">
-      <h2>Топ игроков <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
+    <div class="panel collapsed" id="topPlayersPanel">
+      <h2 class="panel-toggle"><span onclick="togglePanel('topPlayersPanel')">Топ игроков ▼</span> <button class="expand-btn" onclick="toggleFullscreen('topPlayersPanel')">⛶</button></h2>
       <div class="tbl-wrap" id="topPlayersBox"></div>
     </div>
   </div>
-  <div class="panel bottom">
-    <h2>Реклама</h2>
+  <div class="panel bottom collapsed" id="adsPanel">
+    <h2 class="panel-toggle" onclick="togglePanel('adsPanel')">Реклама <span class="toggle-icon">▼</span></h2>
     <div class="ads-wrap" id="tblAds"></div>
   </div>
 </div>
@@ -887,7 +890,7 @@ tr:last-child td{border-bottom:none;}
 const TOKEN = ${JSON.stringify(token)};
 let _lastData = null;
 let currentTab = 'combined';
-let currentPeriod = 'all';
+let currentPeriod = '1';
 const SCREEN_NAMES = {
   'welcome':'Приветствие','story':'Сюжет','menu':'Меню','levels':'Выбор ур.',
   'game':'Игра','pause':'Пауза','end':'Конец ур.','shop':'Магазин',
@@ -1015,11 +1018,8 @@ function renderLog(d){
   const now = _lastData.serverTime || Math.floor(Date.now()/1000);
   function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtTime(t){
-    const dt = Math.max(0, now - t);
-    if(dt < 60) return dt + 'с';
-    if(dt < 3600) return Math.floor(dt/60) + 'м';
-    if(dt < 86400) return Math.floor(dt/3600) + 'ч';
-    return new Date(t*1000).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}) + ' ' + new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+    if(!t) return '--:--';
+    return new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'});
   }
   function fmtText(r){
     const lvl = r.level ? (' ур.' + r.level) : '';
@@ -1029,6 +1029,7 @@ function renderLog(d){
       case 'level_end':      return r.won ? ('прошёл' + lvl) : ('проиграл' + lvl);
       case 'level_abandon':  return 'вышел с' + lvl;
       case 'app_close':      return 'вышел (экран: ' + (ruScreen(r.screen) || '—') + ')';
+      case 'transition_to_match3': return 'перешёл в Match-3';
       case 'purchase':       return 'купил: ' + (r.item || 'товар') + (r.amount ? ' (' + r.amount + ')' : '');
       case 'ad_watch':       return 'реклама ' + (r.kind || '') + ' — ' + (r.ok ? 'ОК' : 'провал');
       case 'share':          return 'поделился';
@@ -1045,12 +1046,21 @@ function renderLog(d){
   box.innerHTML = rows.map(r => 
     '<div class="log-line">' + 
       '<span class="log-time">' + fmtTime(r.t) + '</span>' + 
+      '<span class="log-sep">·</span>' + 
       '<span class="log-player">' + esc(r.player) + '</span>' + 
+      '<span class="log-sep">·</span>' + 
       '<span class="log-text ' + fmtClass(r) + '">' + esc(fmtText(r)) + '</span>' + 
     '</div>'
   ).join('');
 }
 
+function togglePanel(id) {
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.classList.toggle('collapsed');
+  const icon = el.querySelector('.toggle-icon');
+  if(icon) icon.textContent = el.classList.contains('collapsed') ? '▶' : '▼';
+}
 function toggleFullscreen(id) {
   const el = document.getElementById(id);
   if(!el) return;
