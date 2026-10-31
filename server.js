@@ -8,12 +8,7 @@ const { Pool } = require('pg');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
 
 // ID, которые скрыты из статистики
-const IGNORED_PLAYER_IDS = new Set([
-  '29506969',           // тестовый VK
-  '560206319344',       // тестовый OK
-  'ok_560206319344',    // тестовый OK (с префиксом)
-  'ok_29506969',        // тестовый VK в OK-режиме
-]);
+const IGNORED_PLAYER_IDS = new Set([]);
 function isIgnoredPlayer(playerId){
   if(!playerId) return false;
   const idStr = String(playerId);
@@ -640,6 +635,33 @@ async function buildStatsSummary(period = 'all') {
 }
 
 function processEvents(events, maxLevels) {
+  // --- УМНЫЙ ФИЛЬТР БОТОВ ---
+  const validSessions = new Set();
+  const sessionStarts = {};
+  const sessionHasLevel = new Set();
+  
+  // Собираем информацию о сессиях
+  for (const e of events) {
+    if (!e.sessionId) continue;
+    if (e.ev === 'session_start') sessionStarts[e.sessionId] = e.t;
+    if (e.ev === 'level_start') sessionHasLevel.add(e.sessionId);
+  }
+  
+  // Проверяем длительность завершенных сессий
+  for (const e of events) {
+    if (e.ev === 'session_end' && sessionStarts[e.sessionId]) {
+      const duration = e.t - sessionStarts[e.sessionId];
+      if (duration >= 10) validSessions.add(e.sessionId);
+    }
+  }
+  
+  // Добавляем те, где был level_start
+  for (const sid of sessionHasLevel) validSessions.add(sid);
+  
+  // Фильтруем массив: оставляем события только из "валидных" сессий
+  // (Если у события вообще нет sessionId, оставляем его, чтобы не сломать общую статистику)
+  events = events.filter(e => !e.sessionId || validSessions.has(e.sessionId));
+  // --- КОНЕЦ ФИЛЬТРА ---
   const byDay = {};
   const players = new Set();
   const eventCounts = {};
@@ -774,10 +796,43 @@ function processEvents(events, maxLevels) {
   }
   const topPlayers = [...playerSessions.entries()].map(([playerId, count]) => ({ playerId, count })).sort((a,b) => b.count - a.count).slice(0, 100);
 
+  // --- RETENTION D1, D7, D30 ---
+  const playerFirstSeen = {};
+  const playerSubsequentDays = {};
+  
+  for (const e of events) {
+    if (e.ev !== 'session_start' || !e.playerId) continue;
+    const pid = e.playerId;
+    const dayKey = new Date(Number(e.t) * 1000).toISOString().slice(0, 10);
+    if (!playerFirstSeen[pid]) playerFirstSeen[pid] = dayKey;
+    if (dayKey !== playerFirstSeen[pid]) {
+      if (!playerSubsequentDays[pid]) playerSubsequentDays[pid] = new Set();
+      playerSubsequentDays[pid].add(dayKey);
+    }
+  }
+  
+  let d1 = 0, d7 = 0, d30 = 0, totalPlayers = 0;
+  for (const pid of Object.keys(playerFirstSeen)) {
+    const first = new Date(playerFirstSeen[pid]);
+    totalPlayers++;
+    const subs = playerSubsequentDays[pid] || [];
+    for (const sd of subs) {
+      const diff = Math.floor((new Date(sd) - first) / 86400000);
+      if (diff === 1) d1++;
+      if (diff === 7) d7++;
+      if (diff === 30) d30++;
+    }
+  }
+  const retention = {
+    d1: totalPlayers ? Math.round(d1 / totalPlayers * 100) : 0,
+    d7: totalPlayers ? Math.round(d7 / totalPlayers * 100) : 0,
+    d30: totalPlayers ? Math.round(d30 / totalPlayers * 100) : 0
+  };
+
   return {
     totalEvents: events.length, uniquePlayers: players.size, avgSessionSec: avgSession,
     purchases, adWatched, adFailed, adRewarded, adInterstitial, days, eventCounts, funnel, screens, lastScreen,
-    onlineNowCount: onlineNow.length, onlineNow: onlineNow.slice(0,20), onlinePeak24h: peak, historyOnline, recentLog: logEvents, topPlayers
+    onlineNowCount: onlineNow.length, onlineNow: onlineNow.slice(0,20), onlinePeak24h: peak, historyOnline, recentLog: logEvents, topPlayers, retention
   };
 }
 
@@ -796,7 +851,7 @@ body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;pa
 .tab-btn{padding:4px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;font-weight:600;color:#475569;font-size:12px;}
 .tab-btn.active{background:#6366f1;color:#fff;border-color:#6366f1;}
 .actions{display:flex;gap:8px;}
-.cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;flex-shrink:0;}
+.cards{display:grid;grid-template-columns:repeat(11,1fr);gap:6px;flex-shrink:0;}
 .card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:4px 6px;text-align:center;}
 .card b{display:block;font-size:16px;color:#6366f1;line-height:1.1;}
 .card.card-online{background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-color:#059669;}
@@ -950,7 +1005,10 @@ function renderCards(d){
     ['Ср. сессия', d.avgSessionSec ? Math.round(d.avgSessionSec/60) + ' мин' : '—', false],
     ['Покупок',    d.purchases,      false],
     ['Реклам OK',  d.adWatched,      false],
-    ['Реклама ✗',  d.adFailed,       false]
+    ['Реклама ✗',  d.adFailed,       false],
+    ['Retention D1', d.retention ? d.retention.d1 + '%' : '—', false],
+    ['Retention D7', d.retention ? d.retention.d7 + '%' : '—', false],
+    ['Retention D30', d.retention ? d.retention.d30 + '%' : '—', false]
   ];
   c.innerHTML = items.map(([t,v,hl]) =>
     '<div class="card'+(hl?' card-online':'')+'"><b>'+v+'</b><small>'+t+'</small></div>'
