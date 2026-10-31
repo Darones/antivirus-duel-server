@@ -17,7 +17,7 @@ const IGNORED_PLAYER_IDS = new Set([
 function isIgnoredPlayer(playerId){
   if(!playerId) return false;
   const idStr = String(playerId);
-  if(idStr.startsWith('anon_') || idStr.startsWith('match3_anon_')) return true;
+  // Фильтр anon_ отключен для продакшена (фиксируем всех)
   return IGNORED_PLAYER_IDS.has(idStr);
 }
 
@@ -105,6 +105,11 @@ const TANKS_SHOP_ITEMS = {
   tanks_coins_small:  { title: '10 000 монет', price: 5,  photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
   tanks_coins_medium: { title: '25 000 монет', price: 10, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
   tanks_coins_large:  { title: '60 000 монет', price: 20, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/coin.png' },
+  tanks_weapon_mg:     { title: '\u041f\u0443\u043b\u0435\u043c\u0451\u0442', price: 1, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/weapon.png' },
+  tanks_weapon_sniper: { title: '\u0421\u043d\u0430\u0439\u043f\u0435\u0440\u043a\u0430', price: 2, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/weapon.png' },
+  tanks_weapon_flame:  { title: '\u041e\u0433\u043d\u0435\u043c\u0451\u0442', price: 2, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/weapon.png' },
+  tanks_weapon_rocket: { title: '\u0420\u0430\u043a\u0435\u0442\u043d\u0438\u0446\u0430', price: 3, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/weapon.png' },
+  tanks_weapon_laser:  { title: '\u041b\u0430\u0437\u0435\u0440', price: 5, photo_url: 'https://raw.githubusercontent.com/Darones/assets/main/weapon.png' },
 };
 const VK_SHOP_ITEMS_BY_APP = {
   '54764920': SHOP_ITEMS,
