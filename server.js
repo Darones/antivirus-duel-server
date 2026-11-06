@@ -842,7 +842,7 @@ function renderStatsDashboard(token) {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 *{box-sizing:border-box;}
-body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;min-height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+body{font:13px system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:8px;height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:8px;}
 .header{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:6px 12px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;}
 .header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .header h1{margin:0;font-size:16px;}
