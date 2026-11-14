@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Антивирус: Иммунитет — статистика</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+  --bg:#04121a; --bg2:#061821; --panel:rgba(255,255,255,.055); --line:rgba(255,255,255,.12);
+  --text:#eaf6ff; --muted:#8fb0c4; --green:#39e6b0; --red:#ff6b5a; --blue:#5ab0ff;
+  --gold:#ffd166; --pink:#ff4d8d; --purple:#b98cff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;background:
+    radial-gradient(1100px 560px at 10% -10%,rgba(57,230,176,.10),transparent 60%),
+    radial-gradient(900px 520px at 95% 0%,rgba(255,77,141,.09),transparent 60%),
+    var(--bg);
+  color:var(--text);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}
+.wrap{max-width:1480px;margin:0 auto;padding:18px 18px 40px;display:flex;flex-direction:column;gap:12px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.header-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:38px;height:38px;border-radius:12px;background:radial-gradient(circle at 35% 30%,#ff8ab8,#7c0d42);box-shadow:0 0 18px rgba(255,77,141,.3);display:flex;align-items:center;justify-content:center;font-size:20px}
+.brand h1{margin:0;font-size:18px;letter-spacing:-.02em;line-height:1.1}
+.brand span{display:block;font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
+.updated{font-size:10px;color:var(--muted)}
+.period{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.pbtn{border:1px solid var(--line);background:var(--panel);color:#cfe6f2;border-radius:9px;padding:5px 9px;font:inherit;font-size:10px;font-weight:700;cursor:pointer}
+.pbtn.active{background:rgba(57,230,176,.16);border-color:rgba(57,230,176,.5);color:var(--green)}
+.actions{display:flex;gap:6px}
+.act{border:1px solid var(--line);background:var(--panel);color:#cfe6f2;border-radius:9px;padding:5px 9px;font:inherit;font-size:10px;font-weight:700;cursor:pointer}
+.act.danger{color:#ff9a8f;border-color:rgba(255,107,90,.3)}
+.cards{display:grid;grid-template-columns:repeat(12,1fr);gap:7px}
+.card{border:1px solid var(--line);border-radius:14px;background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.02));padding:8px 10px;text-align:center}
+.card b{display:block;font-size:19px;line-height:1.1;color:var(--green);font-variant-numeric:tabular-nums}
+.card small{display:block;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:2px}
+.card.hot{background:linear-gradient(135deg,rgba(57,230,176,.2),rgba(18,169,122,.12));border-color:rgba(57,230,176,.4)}
+.card.hot b{color:#fff}
+.card.pink b{color:var(--pink)}
+.card.gold b{color:var(--gold)}
+.card.red b{color:#ff9a8f}
+.main{display:grid;grid-template-columns:1.05fr 1.35fr;gap:10px;align-items:start}
+.col{display:flex;flex-direction:column;gap:10px;min-width:0}
+.panel{border:1px solid var(--line);border-radius:16px;background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.018));padding:10px 12px;min-width:0}
+.panel h2{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#cfe6f2;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.panel h2 span{font-size:9px;color:var(--muted);letter-spacing:0;text-transform:none;font-weight:400}
+.chart{position:relative;height:180px}
+.chart.small{height:155px}
+.log{height:255px;overflow-y:auto;font:10.5px/1.45 "Consolas","SF Mono",monospace;background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:7px 8px;scrollbar-width:thin}
+.log-line{display:flex;gap:6px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.035);white-space:nowrap}
+.log-time{color:#5f7f91;flex:0 0 40px}
+.log-player{color:#8fb0c4;flex:0 0 78px;overflow:hidden;text-overflow:ellipsis}
+.log-text{color:#d6ebf6;overflow:hidden;text-overflow:ellipsis}
+.log-text.good{color:#8ff5cf}.log-text.bad{color:#ff9a8f}.log-text.warn{color:#ffd166}.log-text.pay{color:#d8b8ff}
+table{width:100%;border-collapse:collapse;font-size:10.5px}
+th,td{padding:4px 5px;text-align:left;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap}
+th{font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+td a{color:var(--green);text-decoration:none;cursor:pointer}
+td a:hover{text-decoration:underline}
+.ads{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ad{border-radius:12px;padding:9px 10px;color:#fff;display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:700}
+.ad b{font-size:17px}
+.ad.rewarded{background:linear-gradient(135deg,#16a34a,#0f7a37)}
+.ad.inter{background:linear-gradient(135deg,#2563eb,#1d4ed8)}
+.ad.failed{background:linear-gradient(135deg,#dc2626,#991b1b)}
+.screens{display:flex;flex-direction:column;gap:4px}
+.screen-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#cfe6f2}
+.screen-row span:first-child{flex:0 0 110px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.screen-bar{flex:1;height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
+.screen-bar i{display:block;height:100%;background:linear-gradient(90deg,#39e6b0,#5ab0ff);border-radius:99px}
+.screen-row b{flex:0 0 34px;text-align:right;color:#eaf6ff;font-variant-numeric:tabular-nums}
+.empty{font-size:10px;color:var(--muted);padding:8px 0}
+.overlay{position:fixed;inset:0;z-index:100;background:rgba(3,10,16,.8);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:18px}
+.overlay.show{display:flex}
+.dialog{width:min(760px,100%);max-height:86vh;background:#071923;border:1px solid var(--line);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+.dialog h3{margin:0;font-size:16px}
+.dialog .events{overflow:auto;font:10.5px/1.55 "Consolas","SF Mono",monospace;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px;white-space:pre-wrap}
+.dialog .close{align-self:flex-end;border:0;background:rgba(255,255,255,.08);color:#eaf6ff;border-radius:9px;padding:6px 10px;font:inherit;font-size:10px;cursor:pointer}
+.toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,12px);background:#071923;border:1px solid var(--line);color:#eaf6ff;font-size:10px;padding:8px 12px;border-radius:999px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:1100px){.cards{grid-template-columns:repeat(6,1fr)}.main{grid-template-columns:1fr}.log{height:220px}}
+@media(max-width:620px){.cards{grid-template-columns:repeat(3,1fr)}.header{align-items:flex-start}.brand h1{font-size:16px}.chart{height:150px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <div class="brand">
+        <div class="logo">☣</div>
+        <div><h1>Антивирус: Иммунитет</h1><span>статистика игры</span></div>
+      </div>
+      <div class="updated" id="updated">Загрузка…</div>
+      <div class="period" id="period">
+        <button class="pbtn" data-period="1">1 день</button>
+        <button class="pbtn active" data-period="7">7 дней</button>
+        <button class="pbtn" data-period="30">30 дней</button>
+        <button class="pbtn" data-period="all">Всё время</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="act" onclick="copyJson()">📋 JSON</button>
+      <button class="act danger" onclick="resetStats()">🗑 Стереть</button>
+    </div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="main">
+    <div class="col">
+      <div class="panel"><h2>Игроки по дням <span>уникальные / сессии</span></h2><div class="chart small"><canvas id="chDays"></canvas></div></div>
+      <div class="panel"><h2>Воронка по уровням <span>начали / прошли / проиграли</span></h2><div class="chart"><canvas id="chFunnel"></canvas></div></div>
+      <div class="panel"><h2>Экраны <span>переходы</span></h2><div class="screens" id="screens"></div></div>
+      <div class="panel"><h2>Реклама <span>за период</span></h2><div class="ads" id="ads"></div></div>
+    </div>
+    <div class="col">
+      <div class="panel"><h2>Живой лог <span>последние события</span></h2><div class="log" id="log"></div></div>
+      <div class="panel"><h2>Онлайн сейчас <span id="onlineCount">0 чел.</span></h2><div id="online"><div class="empty">Никого</div></div></div>
+      <div class="panel"><h2>Топ игроков <span>заходы</span></h2><div id="topPlayers"><div class="empty">Пока никого</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="playerOverlay">
+  <div class="dialog">
+    <h3 id="playerTitle">Игрок</h3>
+    <div class="events" id="playerEvents"></div>
+    <button class="close" onclick="closePlayer()">Закрыть</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = __STATS_TOKEN__;
+let DATA = null;
+let currentPeriod = '7';
+let charts = {};
+
+const SCREEN_NAMES = {
+  boot:'Загрузка', map:'Карта', battle:'Бой', heroes:'Герои', shop:'Магазин',
+  settings:'Настройки', story:'Сюжет', result:'Результат', tutorial:'Обучение',
+  welcome:'Приветствие', menu:'Меню', levels:'Выбор ур.', game:'Игра', pause:'Пауза',
+  end:'Конец ур.', daily:'Бонус', records:'Рекорды', duel:'Дуэль'
+};
+function ruScreen(k){return k ? (SCREEN_NAMES[k] || k) : '—';}
+function esc(s){return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('show'),1800);}
+function fmtTime(t){if(!t)return '--:--';return new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'});}
+
+document.getElementById('period').addEventListener('click', e => {
+  const b = e.target.closest('[data-period]'); if(!b) return;
+  currentPeriod = b.dataset.period;
+  document.querySelectorAll('[data-period]').forEach(x=>x.classList.toggle('active',x===b));
+  refresh();
+});
+
+async function refresh(){
+  try{
+    const r = await fetch('/stats/data?token='+encodeURIComponent(TOKEN)+'&period='+encodeURIComponent(currentPeriod));
+    if(!r.ok){document.body.innerHTML='<h1 style="padding:20px">403 — неверный токен</h1>';return;}
+    const d = await r.json();
+    DATA = d.antivirus || d.combined || {};
+    document.getElementById('updated').textContent = 'Обновлено: ' + new Date().toLocaleString('ru-RU');
+    renderAll();
+  }catch(e){console.warn('refresh',e);}
+}
+function renderAll(){
+  if(!DATA)return;
+  renderCards();
+  renderDays();
+  renderFunnel();
+  renderScreens();
+  renderAds();
+  renderLog();
+  renderOnline();
+  renderTop();
+}
+function sessionsCount(){
+  if(DATA.eventCounts && DATA.eventCounts.session_start) return DATA.eventCounts.session_start;
+  return (DATA.days||[]).reduce((a,d)=>a+(d.sessions||0),0);
+}
+function renderCards(){
+  const r = DATA.retention || {};
+  const items = [
+    ['Онлайн', DATA.onlineNowCount||0, 'hot'],
+    ['Пик 24ч', DATA.onlinePeak24h||0, ''],
+    ['Игроков', DATA.uniquePlayers||0, ''],
+    ['Сессий', sessionsCount(), ''],
+    ['Ср. сессия', DATA.avgSessionSec ? Math.round(DATA.avgSessionSec/60)+' мин' : '—', ''],
+    ['Покупок', DATA.purchases||0, 'gold'],
+    ['Rewarded', DATA.adRewarded||0, ''],
+    ['Interstitial', DATA.adInterstitial||0, ''],
+    ['Ошибки рекламы', DATA.adFailed||0, 'red'],
+    ['D1', r.d1!=null ? r.d1+'%' : '—', ''],
+    ['D7', r.d7!=null ? r.d7+'%' : '—', ''],
+    ['D30', r.d30!=null ? r.d30+'%' : '—', '']
+  ];
+  document.getElementById('cards').innerHTML = items.map(([t,v,c])=>
+    '<div class="card '+c+'"><b>'+v+'</b><small>'+t+'</small></div>'
+  ).join('');
+}
+function renderDays(){
+  const cv=document.getElementById('chDays'); if(!cv)return;
+  if(charts.days)charts.days.destroy();
+  const days=DATA.days||[];
+  charts.days=new Chart(cv,{
+    type:'line',
+    data:{labels:days.map(d=>d.day),datasets:[
+      {label:'Игроки',data:days.map(d=>d.players),borderColor:'#39e6b0',backgroundColor:'rgba(57,230,176,.12)',fill:true,tension:.35,pointRadius:2},
+      {label:'Сессии',data:days.map(d=>d.sessions),borderColor:'#5ab0ff',backgroundColor:'rgba(90,176,255,.08)',fill:false,tension:.35,pointRadius:2}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8fb0c4',boxWidth:10,font:{size:9}}}},scales:{x:{ticks:{color:'#5f7f91',font:{size:8},maxRotation:60},grid:{color:'rgba(255,255,255,.04)'}},y:{beginAtZero:true,ticks:{color:'#5f7f91',font:{size:8}},grid:{color:'rgba(255,255,255,.05)'}}}}
+  });
+}
+function renderFunnel(){
+  const cv=document.getElementById('chFunnel'); if(!cv)return;
+  if(charts.funnel)charts.funnel.destroy();
+  const f=(DATA.funnel||[]).slice(0,30);
+  charts.funnel=new Chart(cv,{
+    type:'bar',
+    data:{labels:f.map(x=>'Ур.'+x.level),datasets:[
+      {label:'Начали',data:f.map(x=>x.started),backgroundColor:'rgba(143,176,196,.45)'},
+      {label:'Прошли',data:f.map(x=>x.won),backgroundColor:'rgba(57,230,176,.75)'},
+      {label:'Проиграли',data:f.map(x=>x.lost),backgroundColor:'rgba(255,107,90,.75)'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8fb0c4',boxWidth:10,font:{size:9}}}},scales:{x:{stacked:true,ticks:{color:'#5f7f91',font:{size:8},maxRotation:60},grid:{display:false}},y:{stacked:true,beginAtZero:true,ticks:{color:'#5f7f91',font:{size:8}},grid:{color:'rgba(255,255,255,.05)'}}}}
+  });
+}
+function renderScreens(){
+  const el=document.getElementById('screens'); if(!el)return;
+  const rows=Object.entries(DATA.screens||{}).sort((a,b)=>b[1]-a[1]);
+  if(!rows.length){el.innerHTML='<div class="empty">Пока нет данных</div>';return;}
+  const max=Math.max(...rows.map(r=>r[1]),1);
+  el.innerHTML=rows.slice(0,10).map(([k,v])=>
+    '<div class="screen-row"><span>'+esc(ruScreen(k))+'</span><div class="screen-bar"><i style="width:'+Math.round(v/max*100)+'%"></i></div><b>'+v+'</b></div>'
+  ).join('');
+}
+function renderAds(){
+  document.getElementById('ads').innerHTML =
+    '<div class="ad rewarded"><span>Rewarded</span><b>'+(DATA.adRewarded||0)+'</b></div>'
+    +'<div class="ad inter"><span>Interstitial</span><b>'+(DATA.adInterstitial||0)+'</b></div>'
+    +'<div class="ad failed"><span>Ошибки</span><b>'+(DATA.adFailed||0)+'</b></div>';
+}
+function fmtEvent(r){
+  const lvl = r.level ? (' ур.'+r.level) : '';
+  switch(r.ev){
+    case 'session_start': return 'вошёл';
+    case 'session_end': return 'вышел' + (r.duration ? ' · '+r.duration+' с' : '');
+    case 'screen': return 'экран: '+ruScreen(r.screen);
+    case 'level_start': return 'начал'+lvl;
+    case 'level_end': return (r.won ? 'прошёл' : 'проиграл')+lvl;
+    case 'battle_start': return 'бой'+lvl+(r.boss?' · БОСС':'');
+    case 'battle_end': return (r.won?'победа':'поражение')+' · бой'+lvl+(r.reason?' · '+r.reason:'');
+    case 'boss_phase': return 'босс: фаза '+(r.phase||'?')+' · '+lvl;
+    case 'ultimate_used': return 'ульта: '+(r.hero||'?');
+    case 'continue_used': return 'продолжил · '+(r.kind||'');
+    case 'tutorial_step': return 'обучение: шаг '+(r.step!=null?r.step:'?');
+    case 'tutorial_done': return 'обучение пройдено';
+    case 'purchase': return 'купил: '+(r.item||'товар');
+    case 'ad_watch': return 'реклама '+(r.kind||'')+' — '+(r.ok?'ОК':'провал');
+    case 'app_close': return 'вышел · экран: '+ruScreen(r.screen);
+    case 'transition_to_match3': return 'перешёл в Match-3';
+    default: return r.ev;
+  }
+}
+function eventClass(r){
+  if(r.ev==='level_end'||r.ev==='battle_end')return r.won?'good':'bad';
+  if(r.ev==='ad_watch')return r.ok?'good':'warn';
+  if(r.ev==='purchase')return 'pay';
+  return '';
+}
+function renderLog(){
+  const el=document.getElementById('log'); if(!el)return;
+  const rows=(DATA.recentLog||[]).slice(0,80);
+  if(!rows.length){el.innerHTML='<div class="empty">Пока пусто</div>';return;}
+  el.innerHTML=rows.map(r=>
+    '<div class="log-line"><span class="log-time">'+fmtTime(r.t)+'</span><span class="log-player">'+esc(r.player||'—')+'</span><span class="log-text '+eventClass(r)+'">'+esc(fmtEvent(r))+'</span></div>'
+  ).join('');
+}
+function renderOnline(){
+  const el=document.getElementById('online');
+  const rows=(DATA.onlineNow||[]).slice().sort((a,b)=>a.ageSec-b.ageSec);
+  document.getElementById('onlineCount').textContent=(DATA.onlineNowCount||0)+' чел.';
+  if(!rows.length){el.innerHTML='<div class="empty">Никого</div>';return;}
+  el.innerHTML='<table><tr><th>Игрок</th><th>Пл.</th><th>Экран</th><th>Ур.</th><th>Тишина</th></tr>'
+    +rows.map(r=>'<tr><td><a onclick="openPlayer(\''+esc(r.playerId)+'\')">'+esc(r.playerId)+'</a></td><td>'+esc(r.platform||'—')+'</td><td>'+esc(ruScreen(r.screen))+'</td><td>'+esc(r.level??'—')+'</td><td>'+r.ageSec+'с</td></tr>').join('')
+    +'</table>';
+}
+function renderTop(){
+  const el=document.getElementById('topPlayers');
+  const rows=DATA.topPlayers||[];
+  if(!rows.length){el.innerHTML='<div class="empty">Пока никого</div>';return;}
+  el.innerHTML='<table><tr><th>#</th><th>Игрок</th><th>Заходов</th></tr>'
+    +rows.slice(0,15).map((r,i)=>'<tr><td>'+(i+1)+'</td><td><a onclick="openPlayer(\''+esc(r.playerId)+'\')">'+esc(r.playerId)+'</a></td><td><b>'+r.count+'</b></td></tr>').join('')
+    +'</table>';
+}
+async function openPlayer(id){
+  document.getElementById('playerOverlay').classList.add('show');
+  document.getElementById('playerTitle').textContent='Игрок '+id;
+  document.getElementById('playerEvents').textContent='Загрузка…';
+  try{
+    const r=await fetch('/stats/player?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(TOKEN));
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const events=await r.json();
+    document.getElementById('playerEvents').textContent=(events||[]).slice(-200).map(e=>fmtTime(e.t)+'  '+e.ev+'  '+JSON.stringify(e)).join('\n')||'Нет событий';
+  }catch(e){document.getElementById('playerEvents').textContent='Ошибка: '+e.message;}
+}
+function closePlayer(){document.getElementById('playerOverlay').classList.remove('show');}
+function copyJson(){if(!DATA)return;try{navigator.clipboard.writeText(JSON.stringify(DATA,null,2));toast('JSON скопирован');}catch(e){toast('Не удалось скопировать');}}
+async function resetStats(){
+  if(!confirm('Стереть всю статистику? Это необратимо.'))return;
+  try{await fetch('/stats/reset?token='+encodeURIComponent(TOKEN));toast('Статистика очищена');refresh();}catch(e){toast('Ошибка');}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+setInterval(refresh,30000);
+refresh();
+</script>
+</body>
+</html>
