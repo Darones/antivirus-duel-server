@@ -183,7 +183,7 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         const rawEvents = Array.isArray(data?.events) ? data.events : [];
-        const events = rawEvents.filter(e => !isIgnoredPlayer(e.playerId));
+        const events = rawEvents;
         if (events.length === 0) { res.writeHead(200); res.end('{"ok":true}'); return; }
         if (pgPool) {
           const values = [];
@@ -239,6 +239,26 @@ const server = http.createServer((req, res) => {
         res.writeHead(500); res.end('reset failed');
       }
     })().catch(e => { console.error('[STATS/reset]', e); res.writeHead(500); res.end('reset failed'); });
+    return;
+  }
+
+  if (req.url.startsWith('/stats/raw')) {
+    (async () => {
+      const urlObj = new URL(req.url, 'http://x');
+      if ((urlObj.searchParams.get('token') || '') !== STATS_TOKEN) { res.writeHead(403); res.end('forbidden'); return; }
+      const limit = Math.min(300, Math.max(1, parseInt(urlObj.searchParams.get('limit') || '80', 10) || 80));
+      let rows = [];
+      if (pgPool) {
+        const r = await pgPool.query('SELECT payload FROM events ORDER BY t DESC LIMIT $1', [limit]);
+        rows = r.rows.map(x => x.payload);
+      } else {
+        let lines = [];
+        try { lines = fs.readFileSync(STATS_FILE, 'utf8').split(String.fromCharCode(10)).filter(Boolean); } catch { lines = []; }
+        rows = lines.slice(-limit).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean).reverse();
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(rows));
+    })().catch(e => { console.error('[STATS/raw]', e); res.writeHead(500); res.end('error'); });
     return;
   }
 
