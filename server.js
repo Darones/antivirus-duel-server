@@ -630,8 +630,8 @@ async function buildStatsSummary(period = 'all') {
   }
 
   return {
-    combined: processEvents(apps.combined, 30),
-    antivirus: processEvents(apps.antivirus, 30),
+    combined: processEvents(apps.combined, 100),
+    antivirus: processEvents(apps.antivirus, 100),
     match3: processEvents(apps.match3, 100),
     tanks: processEvents(apps.tanks, 30),
     serverTime: Math.floor(Date.now() / 1000)

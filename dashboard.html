@@ -49,6 +49,21 @@ body{
 .panel h2{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#cfe6f2;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .panel h2 span{font-size:9px;color:var(--muted);letter-spacing:0;text-transform:none;font-weight:400}
 .chart{position:relative;height:180px}
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:7px}
+.chips button{padding:3px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#8fb0c4;font-size:10px;font-weight:700;cursor:pointer}
+.chips button.on{background:rgba(57,230,176,.16);border-color:rgba(57,230,176,.5);color:#eaf6ff}
+.psum{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+.psum span{background:rgba(57,230,176,.08);border:1px solid rgba(57,230,176,.22);border-radius:8px;padding:3px 7px;font-size:10px;color:#cfe6f2;white-space:nowrap}
+.psum b{color:#eaf6ff}
+.plist{display:flex;flex-direction:column;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;white-space:normal}
+.prow{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.045);font-size:10.5px;line-height:1.45}
+.ptime{flex:0 0 44px;color:#5f7f91;font-variant-numeric:tabular-nums}
+.ptext{flex:1;color:#cfe6f2;min-width:0}
+.ptext.good{color:#58ff8a}
+.ptext.bad{color:#ff6b5a}
+.ptext.warn{color:#ffe066}
+.ptext.pay{color:#8fd3ff}
+.pday{margin:8px 0 4px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#5f7f91}
 .chart.small{height:155px}
 .log{height:255px;overflow-y:auto;font:10.5px/1.45 "Consolas","SF Mono",monospace;background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:7px 8px;scrollbar-width:thin}
 .log-line{display:flex;gap:6px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.035);white-space:nowrap}
@@ -113,7 +128,7 @@ td a:hover{text-decoration:underline}
   <div class="main">
     <div class="col">
       <div class="panel"><h2>Игроки по дням <span>уникальные / сессии</span></h2><div class="chart small"><canvas id="chDays"></canvas></div></div>
-      <div class="panel"><h2>Воронка по уровням <span>начали / прошли / проиграли</span></h2><div class="chart"><canvas id="chFunnel"></canvas></div></div>
+      <div class="panel"><h2>Воронка по уровням <span>начали / прошли / проиграли</span></h2><div class="chips" id="funnelTabs"></div><div class="chart"><canvas id="chFunnel"></canvas></div></div>
       <div class="panel"><h2>Экраны <span>переходы</span></h2><div class="screens" id="screens"></div></div>
       <div class="panel"><h2>Реклама <span>за период</span></h2><div class="ads" id="ads"></div></div>
     </div>
@@ -216,10 +231,25 @@ function renderDays(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8fb0c4',boxWidth:10,font:{size:9}}}},scales:{x:{ticks:{color:'#5f7f91',font:{size:8},maxRotation:60},grid:{color:'rgba(255,255,255,.04)'}},y:{beginAtZero:true,ticks:{color:'#5f7f91',font:{size:8}},grid:{color:'rgba(255,255,255,.05)'}}}}
   });
 }
+let funnelChapter=0;
+function renderFunnelTabs(){
+  const el=document.getElementById('funnelTabs'); if(!el)return;
+  let html='<button class="'+(funnelChapter===0?'on':'')+'" onclick="setFunnelChapter(0)">Все</button>';
+  for(let i=1;i<=10;i++) html+='<button class="'+(funnelChapter===i?'on':'')+'" onclick="setFunnelChapter('+i+')">'+i+'</button>';
+  el.innerHTML=html;
+}
+function setFunnelChapter(n){funnelChapter=n;renderFunnelTabs();renderFunnel();}
 function renderFunnel(){
   const cv=document.getElementById('chFunnel'); if(!cv)return;
+  renderFunnelTabs();
   if(charts.funnel)charts.funnel.destroy();
-  const f=(DATA.funnel||[]).slice(0,30);
+  let f=DATA.funnel||[];
+  if(funnelChapter){
+    f=f.filter(x=>x.level>(funnelChapter-1)*10&&x.level<=funnelChapter*10);
+  }else{
+    const act=f.filter(x=>x.started||x.won||x.lost);
+    f=(act.length?act:f.slice(0,10)).slice(0,30);
+  }
   charts.funnel=new Chart(cv,{
     type:'bar',
     data:{labels:f.map(x=>'Ур.'+x.level),datasets:[
@@ -298,18 +328,64 @@ function renderTop(){
     +rows.slice(0,15).map((r,i)=>'<tr><td>'+(i+1)+'</td><td><a onclick="openPlayer(\''+esc(r.playerId)+'\')">'+esc(r.playerId)+'</a></td><td><b>'+r.count+'</b></td></tr>').join('')
     +'</table>';
 }
+let playerId=null, playerTimer=null;
 async function openPlayer(id){
+  playerId=id;
   document.getElementById('playerOverlay').classList.add('show');
   document.getElementById('playerTitle').textContent='Игрок '+id;
-  document.getElementById('playerEvents').textContent='Загрузка…';
-  try{
-    const r=await fetch('/stats/player?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(TOKEN));
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const events=await r.json();
-    document.getElementById('playerEvents').textContent=(events||[]).slice(-200).map(e=>fmtTime(e.t)+'  '+e.ev+'  '+JSON.stringify(e)).join('\n')||'Нет событий';
-  }catch(e){document.getElementById('playerEvents').textContent='Ошибка: '+e.message;}
+  document.getElementById('playerEvents').innerHTML='<div class="empty">Загрузка…</div>';
+  await loadPlayer();
+  clearInterval(playerTimer);
+  playerTimer=setInterval(loadPlayer,10000);
 }
-function closePlayer(){document.getElementById('playerOverlay').classList.remove('show');}
+async function loadPlayer(){
+  if(!playerId)return;
+  try{
+    const r=await fetch('/stats/player?id='+encodeURIComponent(playerId)+'&token='+encodeURIComponent(TOKEN));
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    renderPlayer((await r.json())||[]);
+  }catch(e){
+    document.getElementById('playerEvents').innerHTML='<div class="empty">Ошибка: '+esc(e.message)+'</div>';
+  }
+}
+function renderPlayer(evs){
+  const el=document.getElementById('playerEvents');
+  if(!evs||!evs.length){el.innerHTML='<div class="empty">Нет событий</div>';return;}
+  let sessions=0,battles=0,first=0,last=0;
+  const seen=new Set(),won=new Set();
+  for(const e of evs){
+    const t=Number(e.t)||0;
+    if(t){if(!first||t<first)first=t;if(t>last)last=t;}
+    if(e.ev==='session_start')sessions++;
+    if(e.ev==='level_start'){battles++;seen.add(e.level);}
+    if(e.ev==='level_end'&&e.won)won.add(e.level);
+  }
+  const maxLevel=seen.size?Math.max.apply(null,[...seen]):0;
+  const mins=first?Math.max(1,Math.round((last-first)/60)):0;
+  const head='<div class="psum">'
+    +'<span>заходов <b>'+sessions+'</b></span>'
+    +'<span>боёв <b>'+battles+'</b></span>'
+    +'<span>уровней пройдено <b>'+won.size+'</b></span>'
+    +'<span>макс. уровень <b>'+maxLevel+'</b></span>'
+    +'<span>период <b>'+mins+' мин</b></span>'
+    +'</div>';
+  let rows='',lastDay='';
+  const list=evs.slice().sort((a,b)=>(a.t||0)-(b.t||0));
+  for(const e of list){
+    const day=new Date((e.t||0)*1000).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',timeZone:'Europe/Moscow'});
+    if(day!==lastDay){rows+='<div class="pday">'+day+'</div>';lastDay=day;}
+    let txt=fmtEvent(e);
+    if(e.ev==='level_end'&&e.stars)txt+=' · '+'★'.repeat(Math.min(3,Number(e.stars)));
+    if(e.ev==='battle_end'){if(e.turns)txt+=' · '+e.turns+' ходов';if(e.boss)txt+=' · БОСС';}
+    if(e.step&&e.ev!=='tutorial_step')txt+=' · шаг '+e.step;
+    rows+='<div class="prow"><span class="ptime">'+fmtTime(e.t)+'</span><span class="ptext '+eventClass(e)+'">'+esc(txt)+'</span></div>';
+  }
+  el.innerHTML=head+'<div class="plist">'+rows+'</div>';
+}
+function closePlayer(){
+  document.getElementById('playerOverlay').classList.remove('show');
+  clearInterval(playerTimer);playerTimer=null;playerId=null;
+}
 function copyJson(){if(!DATA)return;try{navigator.clipboard.writeText(JSON.stringify(DATA,null,2));toast('JSON скопирован');}catch(e){toast('Не удалось скопировать');}}
 async function resetStats(){
   if(!confirm('Стереть всю статистику? Это необратимо.'))return;
