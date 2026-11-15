@@ -789,7 +789,8 @@ function processEvents(events, maxLevels) {
     .map(e => ({
       t: Number(e.t) || 0, ev: e.ev, player: e.playerId || '—', platform: e.platform || '',
       level: e.level ?? null, mode: e.mode || '', won: !!e.won, screen: e.screen || '',
-      item: e.item || '', kind: e.kind || '', amount: e.amount ?? null, ok: e.ok === true ? true : (e.ok === false ? false : null)
+      item: e.item || '', kind: e.kind || '', amount: e.amount ?? null, ok: e.ok === true ? true : (e.ok === false ? false : null),
+      err: e.err || '', pre: e.pre ?? '', step: e.step ?? null
     }));
 
   const playerSessions = new Map();

@@ -291,7 +291,7 @@ function fmtEvent(r){
     case 'tutorial_step': return 'обучение: шаг '+(r.step!=null?r.step:'?');
     case 'tutorial_done': return 'обучение пройдено';
     case 'purchase': return 'купил: '+(r.item||'товар');
-    case 'ad_watch': return 'реклама '+(r.kind||'')+' — '+(r.ok?'ОК':'провал');
+    case 'ad_watch': return 'реклама '+(r.kind||'')+' — '+(r.ok?'ОК':'провал')+(r.err?' · '+r.err:'');
     case 'app_close': return 'вышел · экран: '+ruScreen(r.screen);
     case 'transition_to_match3': return 'перешёл в Match-3';
     default: return r.ev;
