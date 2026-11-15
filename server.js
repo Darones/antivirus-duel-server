@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 const STATS_FILE = path.join(__dirname, 'events.jsonl');
 
 // ID, которые скрыты из статистики
-const IGNORED_PLAYER_IDS = new Set([]);
+const IGNORED_PLAYER_IDS = new Set(['29506969']);
 function isIgnoredPlayer(playerId){
   if(!playerId) return false;
   const idStr = String(playerId);
