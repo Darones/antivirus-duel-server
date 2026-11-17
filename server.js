@@ -665,6 +665,7 @@ function processEvents(events, maxLevels) {
   const sessionFirstClose = {};
   const sessionLastActive = {};
   const sessionHasLevel = new Set();
+  const sessionTutorialDone = new Set();
   
   // Собираем информацию о сессиях
   for (const e of events) {
@@ -680,6 +681,7 @@ function processEvents(events, maxLevels) {
       if (e.ev !== 'session_end' && (!sessionLastActive[sid] || t > sessionLastActive[sid])) sessionLastActive[sid] = t;
     }
     if (e.ev === 'level_start') sessionHasLevel.add(sid);
+    if (e.ev === 'tutorial_done' || e.ev === 'tutorial_complete') sessionTutorialDone.add(sid);
   }
   
   // Длительность сессии считаем по активному концу: первый app_close
@@ -697,11 +699,12 @@ function processEvents(events, maxLevels) {
     if (sessionStarts[sid] === undefined) continue;
     const duration = Math.max(0, activeSessionEnd(sid, Number(e.t) || 0) - sessionStarts[sid]);
     sessionDurations[sid] = duration;
-    if (duration >= 10) validSessions.add(sid);
+    // Жёсткий фильтр: длительность сама по себе больше не делает сессию валидной.
   }
   
   // Добавляем те, где был level_start
   for (const sid of sessionHasLevel) validSessions.add(sid);
+  for (const sid of sessionTutorialDone) validSessions.add(sid);
   
   // Фильтруем массив: оставляем события только из "валидных" сессий
   // (Если у события вообще нет sessionId, оставляем его, чтобы не сломать общую статистику)
@@ -824,7 +827,7 @@ function processEvents(events, maxLevels) {
     funnel.push({ level: i, started: levelStart[i] || 0, won: levelEnd[i] || 0, lost: levelFail[i] || 0 });
   }
 
-  const LOG_EVENTS = new Set(['session_start','level_start','level_end','app_close','transition_to_match3','purchase','ad_watch','share','level_abandon']);
+  const LOG_EVENTS = new Set(['session_start','level_start','level_end','tutorial_done','app_close','transition_to_match3','purchase','ad_watch','share','level_abandon']);
   const logEvents = events
     .filter(e => LOG_EVENTS.has(e.ev))
     .slice(-150)
