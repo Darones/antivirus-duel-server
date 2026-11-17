@@ -662,21 +662,42 @@ function processEvents(events, maxLevels) {
   // --- УМНЫЙ ФИЛЬТР БОТОВ ---
   const validSessions = new Set();
   const sessionStarts = {};
+  const sessionFirstClose = {};
+  const sessionLastActive = {};
   const sessionHasLevel = new Set();
   
   // Собираем информацию о сессиях
   for (const e of events) {
     if (!e.sessionId) continue;
-    if (e.ev === 'session_start') sessionStarts[e.sessionId] = e.t;
-    if (e.ev === 'level_start') sessionHasLevel.add(e.sessionId);
+    const sid = String(e.sessionId);
+    const t = Number(e.t) || 0;
+    if (e.ev === 'session_start') {
+      sessionStarts[sid] = t;
+      sessionFirstClose[sid] = undefined;
+      sessionLastActive[sid] = t;
+    } else {
+      if (e.ev === 'app_close' && sessionFirstClose[sid] === undefined) sessionFirstClose[sid] = t;
+      if (e.ev !== 'session_end' && (!sessionLastActive[sid] || t > sessionLastActive[sid])) sessionLastActive[sid] = t;
+    }
+    if (e.ev === 'level_start') sessionHasLevel.add(sid);
   }
   
-  // Проверяем длительность завершенных сессий
+  // Длительность сессии считаем по активному концу: первый app_close
+  // (уход игрока) или последнее событие до session_end. Это убирает
+  // время, пока приложение было свёрнуто.
+  function activeSessionEnd(sid, fallback) {
+    if (sessionFirstClose[sid] !== undefined) return sessionFirstClose[sid];
+    return sessionLastActive[sid] || fallback;
+  }
+
+  const sessionDurations = {};
   for (const e of events) {
-    if (e.ev === 'session_end' && sessionStarts[e.sessionId]) {
-      const duration = e.t - sessionStarts[e.sessionId];
-      if (duration >= 10) validSessions.add(e.sessionId);
-    }
+    if (e.ev !== 'session_end' || !e.sessionId) continue;
+    const sid = String(e.sessionId);
+    if (sessionStarts[sid] === undefined) continue;
+    const duration = Math.max(0, activeSessionEnd(sid, Number(e.t) || 0) - sessionStarts[sid]);
+    sessionDurations[sid] = duration;
+    if (duration >= 10) validSessions.add(sid);
   }
   
   // Добавляем те, где был level_start
@@ -684,7 +705,7 @@ function processEvents(events, maxLevels) {
   
   // Фильтруем массив: оставляем события только из "валидных" сессий
   // (Если у события вообще нет sessionId, оставляем его, чтобы не сломать общую статистику)
-  events = events.filter(e => !e.sessionId || validSessions.has(e.sessionId));
+  events = events.filter(e => !e.sessionId || validSessions.has(String(e.sessionId)));
   // --- КОНЕЦ ФИЛЬТРА ---
   const byDay = {};
   const players = new Set();
@@ -712,8 +733,10 @@ function processEvents(events, maxLevels) {
     eventCounts[e.ev] = (eventCounts[e.ev] || 0) + 1;
 
     if (e.ev === 'session_start') byDay[day].sessions++;
-    if (e.ev === 'session_end' && e.duration) {
-      (sessionsByPlayer[e.playerId] = sessionsByPlayer[e.playerId] || []).push(e.duration);
+    if (e.ev === 'session_end' && e.sessionId) {
+      const sid = String(e.sessionId);
+      const duration = sessionDurations[sid] ?? (Number(e.duration) || 0);
+      if (duration) (sessionsByPlayer[e.playerId] = sessionsByPlayer[e.playerId] || []).push(duration);
     }
     if (e.ev === 'level_start' && e.level != null) levelStart[e.level] = (levelStart[e.level]||0)+1;
     if (e.ev === 'level_end') {
@@ -741,7 +764,7 @@ function processEvents(events, maxLevels) {
     if (e.ev === 'session_end' && sessionKey) {
       const open = openSessions.get(sessionKey);
       if (open) {
-        sessions.push({ start: open.start, end: t, playerId: open.playerId });
+        sessions.push({ start: open.start, end: activeSessionEnd(sessionKey, t), playerId: open.playerId });
         openSessions.delete(sessionKey);
       }
     }
